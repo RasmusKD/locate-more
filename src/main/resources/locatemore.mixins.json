@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "package": "com.rasmus.locatemore.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "StructureCheckAccessor",
+    "ServerLevelStructureAccessor"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  },
+  "refmap": "locatemore.refmap.json"
+}

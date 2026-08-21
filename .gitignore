@@ -1,0 +1,11 @@
+# build
+build/
+.gradle/
+run/
+
+# decompiled Mojang sources + audit bundles (never publish)
+audit/
+audit2/
+audit3/
+audit-bundle.zip
+audit-round-*.md

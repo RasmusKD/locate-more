@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "id": "locatemore",
+  "version": "${version}",
+  "name": "LocateMore",
+  "description": "Adds a count to /locate structure, so one command finds the N nearest instead of just the closest.",
+  "authors": [
+    "Rasmus"
+  ],
+  "license": "MIT",
+  "environment": "*",
+  "entrypoints": {
+    "main": [
+      "com.rasmus.locatemore.LocateMore"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=${loader_version}",
+    "fabric-api": "*",
+    "minecraft": ">=26.1",
+    "java": ">=25"
+  },
+  "mixins": [
+    "locatemore.mixins.json"
+  ]
+}
