@@ -30,7 +30,7 @@ public final class StructureIndex extends SavedData {
             StructureIndex::new,
             RecordCodecBuilder.create(instance -> instance.group(
                     Codec.INT.fieldOf("format").forGetter(index -> FORMAT),
-                    Codec.LONG.fieldOf("seed").forGetter(index -> index.seed),
+                    Codec.LONG.fieldOf("seed").forGetter(StructureIndex::seedForSave),
                     Codec.LONG_STREAM.fieldOf("absent").forGetter(StructureIndex::encodeAbsent)
             ).apply(instance, StructureIndex::decode)),
             DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES);
@@ -68,6 +68,10 @@ public final class StructureIndex extends SavedData {
             previous = key;
         }
         return LongStream.of(deltas.toLongArray());
+    }
+
+    private synchronized long seedForSave() {
+        return seed;
     }
 
     /** Server thread, once per search start: wipe if this is a different world seed. */

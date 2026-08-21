@@ -45,14 +45,25 @@ public final class DevBridge {
             return;
         }
         cooldown = 0;
+        // Security boundary: on a dedicated server (shared hosting, multiple
+        // writers to the game dir) the bridge is dead unless the operator
+        // explicitly enabled it via JVM flag. Local singleplayer keeps the
+        // folder-based convenience: anyone able to create the folder already
+        // owns the machine.
+        if (server.isDedicatedServer() && !Boolean.getBoolean("locatemore.bridge")) {
+            return;
+        }
         Path commands = dir.resolve("commands.txt");
         if (!Files.isRegularFile(commands)) {
             return;
         }
         List<String> lines;
         try {
-            lines = Files.readAllLines(commands, StandardCharsets.UTF_8);
-            Files.delete(commands);
+            // Claim atomically first: a failed delete must never replay a batch.
+            Path claimed = dir.resolve("commands.processing");
+            Files.move(commands, claimed, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            lines = Files.readAllLines(claimed, StandardCharsets.UTF_8);
+            Files.delete(claimed);
         } catch (IOException e) {
             LOGGER.warn("Bridge read failed", e);
             return;

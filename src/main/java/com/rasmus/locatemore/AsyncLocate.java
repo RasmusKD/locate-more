@@ -101,7 +101,11 @@ public final class AsyncLocate {
      * NOT persisted (datapacks can shift biome math without changing the seed).
      * Bounded, cleared on server stop.
      */
-    private static final Map<Structure, ConcurrentHashMap<Long, Boolean>> MATH_MEMO = new ConcurrentHashMap<>();
+    /** Structures can exist in several dimensions with different generators. */
+    private record MemoKey(ResourceKey<Level> dimension, Structure structure) {
+    }
+
+    private static final Map<MemoKey, ConcurrentHashMap<Long, Boolean>> MATH_MEMO = new ConcurrentHashMap<>();
     private static final int MATH_MEMO_CAP = 500_000;
     private static final java.util.concurrent.atomic.AtomicInteger MATH_MEMO_SIZE =
             new java.util.concurrent.atomic.AtomicInteger();
@@ -137,6 +141,11 @@ public final class AsyncLocate {
             while ((pending = INCOMING_LOADS.poll()) != null) {
                 pending.result.complete(null);
             }
+            // Apply outstanding index observations so the final world save
+            // carries them, and reset the in-flight counter (completion
+            // callbacks on the dying server executor may never run).
+            drainIndexMutations();
+            loadsInFlight = 0;
             if (worker != null) {
                 worker.shutdownNow();
                 worker = null;
@@ -217,8 +226,11 @@ public final class AsyncLocate {
 
     private static synchronized ExecutorService workerExecutor() {
         if (worker == null || worker.isShutdown()) {
-            worker = Executors.newSingleThreadExecutor(r -> {
-                Thread thread = new Thread(r, "LocateMore-Worker");
+            java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
+            // Sized to the active-search cap so a second search runs instead of
+            // queuing behind the first with a frozen progress bar.
+            worker = Executors.newFixedThreadPool(MAX_ACTIVE_SEARCHES, r -> {
+                Thread thread = new Thread(r, "LocateMore-Worker-" + n.incrementAndGet());
                 thread.setDaemon(true);
                 return thread;
             });
@@ -242,25 +254,27 @@ public final class AsyncLocate {
         }
     }
 
-    private static void pumpLoads(MinecraftServer server) {
+    private static void drainIndexMutations() {
         IndexMutation mutation;
-        boolean mutated = false;
-        StructureIndex mutatedIndex = null;
+        Set<StructureIndex> mutated = new HashSet<>();
         while ((mutation = INDEX_MUTATIONS.poll()) != null) {
             if (mutation.index().apply(mutation.chunk(), mutation.absent())) {
-                mutated = true;
-                mutatedIndex = mutation.index();
+                mutated.add(mutation.index());
             }
         }
-        if (mutated) {
-            mutatedIndex.setDirty();
+        for (StructureIndex index : mutated) {
+            index.setDirty();
         }
+    }
+
+    private static void pumpLoads(MinecraftServer server) {
+        drainIndexMutations();
         while (loadsInFlight < MAX_CHUNK_LOADS_IN_FLIGHT) {
             PendingLoad pending = INCOMING_LOADS.poll();
             if (pending == null) {
                 return;
             }
-            if (pending.task.aborted.get()) {
+            if (pending.task.aborted.get() || pending.task.completed) {
                 pending.result.complete(null);
                 continue;
             }
@@ -274,7 +288,7 @@ public final class AsyncLocate {
             level.getChunkSource().getChunkFuture(pos.x(), pos.z(), ChunkStatus.STRUCTURE_STARTS, true)
                     .whenCompleteAsync((chunkResult, throwable) -> {
                         loadsInFlight--;
-                        if (pending.task.aborted.get()) {
+                        if (pending.task.aborted.get() || pending.task.completed) {
                             pending.result.complete(null);
                             return;
                         }
@@ -285,6 +299,8 @@ public final class AsyncLocate {
                                 pending.retried = true;
                                 INCOMING_LOADS.add(pending);
                             } else {
+                                LOGGER.warn("Chunk resolution failed twice at {}; a candidate was dropped",
+                                        pending.candidate.pos());
                                 pending.result.complete(null);
                             }
                             return;
@@ -333,6 +349,8 @@ public final class AsyncLocate {
         final StructureIndex index;
 
         final AtomicBoolean aborted = new AtomicBoolean();
+        /** Set when the search ends normally, so leftover pending loads are dropped. */
+        volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
         int chunksGenerated;
         private ServerBossEvent bossBar;
@@ -400,6 +418,7 @@ public final class AsyncLocate {
                     finish(List.of(), startNanos, t);
                 }
             } finally {
+                completed = true;
                 ACTIVE.remove(key, this);
                 server.execute(this::removeBossBar);
             }
@@ -450,15 +469,11 @@ public final class AsyncLocate {
                         pending.add(load);
                         INCOMING_LOADS.add(load);
                     } else if (done.shadow().result() != null) {
-                        LocateMore.VerifyResult found = done.shadow().result();
-                        if (!found.startChunk().equals(candidate.pos())) {
-                            // Datafixed legacy edge: requeue at the corrected distance.
-                            queue.add(new LocateMore.Candidate(found.startChunk(), candidate.placement(),
-                                    candidate.holders(), LocateMore.horizDistSqr(found.pos(), origin), found));
-                        } else {
-                            buffered.add(new LocateMore.Candidate(candidate.pos(), candidate.placement(),
-                                    candidate.holders(), candidate.distSqr(), found));
-                        }
+                        // Shadow results always come from the candidate chunk's
+                        // own NBT, so no legacy-mismatch handling is needed here
+                        // (that edge only exists on the chunk-load path above).
+                        buffered.add(new LocateMore.Candidate(candidate.pos(), candidate.placement(),
+                                candidate.holders(), candidate.distSqr(), done.shadow().result()));
                     }
                 }
                 // Harvest completed loads.
@@ -471,8 +486,16 @@ public final class AsyncLocate {
                     LocateMore.VerifyResult resolved = load.result.getNow(null);
                     if (resolved != null) {
                         stats.loadHits++;
-                        buffered.add(new LocateMore.Candidate(load.candidate.pos(), load.candidate.placement(),
-                                load.candidate.holders(), load.candidate.distSqr(), resolved));
+                        if (!resolved.startChunk().equals(load.candidate.pos())) {
+                            // Datafixed legacy edge: the start lives outside its
+                            // candidate chunk. Requeue at the corrected distance
+                            // so it pops back out in its rightful place.
+                            queue.add(new LocateMore.Candidate(resolved.startChunk(), load.candidate.placement(),
+                                    load.candidate.holders(), LocateMore.horizDistSqr(resolved.pos(), origin), resolved));
+                        } else {
+                            buffered.add(new LocateMore.Candidate(load.candidate.pos(), load.candidate.placement(),
+                                    load.candidate.holders(), load.candidate.distSqr(), resolved));
+                        }
                     }
                 }
                 // Finalize buffered hits that nothing in flight can outrank.
@@ -501,6 +524,7 @@ public final class AsyncLocate {
                 }
                 // Backpressure: bound speculation (and probe-chunk creation).
                 if (shadows.size() >= MAX_PENDING_SHADOWS || pending.size() >= MAX_PENDING_LOADS) {
+                    pushProgress(hits.size(), checked, startNanos);
                     Thread.sleep(5L);
                     continue;
                 }
@@ -668,7 +692,8 @@ public final class AsyncLocate {
 
         private boolean structureCanStart(Structure structure, ChunkPos pos, LocateMore.Stats scratch) {
             long pack = pos.pack();
-            ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(structure, k -> new ConcurrentHashMap<>());
+            MemoKey key = new MemoKey(dimension, structure);
+            ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
             Boolean cached = memo.get(pack);
             if (cached != null) {
                 scratch.indexHits++;
@@ -681,7 +706,7 @@ public final class AsyncLocate {
             if (MATH_MEMO_SIZE.incrementAndGet() > MATH_MEMO_CAP) {
                 MATH_MEMO.clear();
                 MATH_MEMO_SIZE.set(0);
-                memo = MATH_MEMO.computeIfAbsent(structure, k -> new ConcurrentHashMap<>());
+                memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
             }
             memo.put(pack, possible);
             return possible;
