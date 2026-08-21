@@ -23,7 +23,7 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  */
 public final class StructureIndex extends SavedData {
 
-    private static final int FORMAT = 1;
+    private static final int FORMAT = 2;
 
     public static final SavedDataType<StructureIndex> TYPE = new SavedDataType<>(
             Identifier.fromNamespaceAndPath("locatemore", "structure_index"),
@@ -31,23 +31,26 @@ public final class StructureIndex extends SavedData {
             RecordCodecBuilder.create(instance -> instance.group(
                     Codec.INT.fieldOf("format").forGetter(index -> FORMAT),
                     Codec.LONG.fieldOf("seed").forGetter(StructureIndex::seedForSave),
+                    Codec.INT.fieldOf("cfg").forGetter(StructureIndex::configForSave),
                     Codec.LONG_STREAM.fieldOf("absent").forGetter(StructureIndex::encodeAbsent)
             ).apply(instance, StructureIndex::decode)),
             DataFixTypes.SAVED_DATA_RANDOM_SEQUENCES);
 
     private final LongOpenHashSet absentChunks = new LongOpenHashSet();
     private long seed;
+    private int configHash;
     private boolean seedInitialized;
 
     public StructureIndex() {
     }
 
-    private static StructureIndex decode(int format, long seed, LongStream absentDeltas) {
+    private static StructureIndex decode(int format, long seed, int configHash, LongStream absentDeltas) {
         StructureIndex index = new StructureIndex();
         if (format != FORMAT) {
-            return index; // future format: start fresh
+            return index; // other format: start fresh
         }
         index.seed = seed;
+        index.configHash = configHash;
         index.seedInitialized = true;
         long[] deltas = absentDeltas.toArray();
         long previous = 0;
@@ -74,13 +77,23 @@ public final class StructureIndex extends SavedData {
         return seed;
     }
 
-    /** Server thread, once per search start: wipe if this is a different world seed. */
-    public synchronized void validateSeed(long levelSeed) {
-        if (!seedInitialized || seed != levelSeed) {
+    private synchronized int configForSave() {
+        return configHash;
+    }
+
+    /**
+     * Server thread, once per search start: wipe when the world seed or the
+     * generation config fingerprint changed. The fingerprint covers the
+     * structure-set registry and the game data version, so datapack changes
+     * that add or remove sets, or a version upgrade, invalidate the index.
+     */
+    public synchronized void validate(long levelSeed, int fingerprint) {
+        if (!seedInitialized || seed != levelSeed || configHash != fingerprint) {
             if (seedInitialized && !absentChunks.isEmpty()) {
                 absentChunks.clear();
             }
             seed = levelSeed;
+            configHash = fingerprint;
             seedInitialized = true;
             setDirty();
         }

@@ -132,6 +132,21 @@ public final class AsyncLocate {
 
     public static void init() {
         ServerTickEvents.END_SERVER_TICK.register(AsyncLocate::pumpLoads);
+        // A departed player's search wastes bounded work at best; a datapack
+        // reload can rebind the structures a search was resolved against.
+        net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
+            Task task = ACTIVE.get(handler.getPlayer().getUUID());
+            if (task != null) {
+                task.abort();
+                ACTIVE.remove(handler.getPlayer().getUUID(), task);
+            }
+        });
+        ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, resources, success) -> {
+            for (Task task : ACTIVE.values()) {
+                task.abort();
+            }
+            ACTIVE.clear();
+        });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (Task task : ACTIVE.values()) {
                 task.abort();
@@ -195,7 +210,7 @@ public final class AsyncLocate {
         }
 
         StructureIndex index = level.getDataStorage().computeIfAbsent(StructureIndex.TYPE);
-        index.validateSeed(state.getLevelSeed());
+        index.validate(state.getLevelSeed(), configFingerprint(level));
 
         Object key = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console";
         Task task = new Task(server, level.dimension(), source, key, printable, holders, count, origin,
@@ -222,6 +237,30 @@ public final class AsyncLocate {
         }
         workerExecutor().execute(task::run);
         return 1;
+    }
+
+    /**
+     * Fingerprint of the generation config the index depends on: the
+     * structure-set registry (ids, placement class, spacing/separation) and
+     * the game data version. Salt/frequency are not readable through public
+     * API, so a pure parameter tweak inside an existing set is not covered;
+     * the README documents /locatemore index clear for that case.
+     */
+    private static int configFingerprint(ServerLevel level) {
+        int hash = net.minecraft.SharedConstants.getCurrentVersion().dataVersion().version();
+        var registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
+        List<String> parts = new ArrayList<>();
+        for (var entry : registry.entrySet()) {
+            StructurePlacement placement = entry.getValue().placement();
+            StringBuilder part = new StringBuilder(entry.getKey().identifier().toString())
+                    .append('|').append(placement.getClass().getSimpleName());
+            if (placement instanceof RandomSpreadStructurePlacement spread) {
+                part.append('|').append(spread.spacing()).append(':').append(spread.separation());
+            }
+            parts.add(part.toString());
+        }
+        java.util.Collections.sort(parts);
+        return 31 * hash + parts.hashCode();
     }
 
     private static synchronized ExecutorService workerExecutor() {
@@ -306,7 +345,7 @@ public final class AsyncLocate {
                             return;
                         }
                         pending.task.chunksGenerated++;
-                        // The chunk now exists on disk; a stale negative entry
+                        // The chunk now exists (it reaches disk on save); a stale entry
                         // would only cost a redundant load, but keep it honest.
                         INDEX_MUTATIONS.add(new IndexMutation(pending.task.index, pos.pack(), false));
                         // Chunk is resident and vanilla's cache warm via
@@ -353,7 +392,7 @@ public final class AsyncLocate {
         volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
         int chunksGenerated;
-        private ServerBossEvent bossBar;
+        private volatile ServerBossEvent bossBar;
         private long lastProgressPush;
 
         Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
@@ -456,8 +495,11 @@ public final class AsyncLocate {
                     if (!shadow.future().isDone()) {
                         continue;
                     }
-                    iterator.remove();
                     ShadowDone done = shadow.future().getNow(null);
+                    if (done != null && done.shadow().needsLoad() && pending.size() >= MAX_PENDING_LOADS) {
+                        continue; // defer: keeps the pending bound hard
+                    }
+                    iterator.remove();
                     if (done == null) {
                         continue;
                     }
@@ -499,7 +541,13 @@ public final class AsyncLocate {
                     }
                 }
                 // Finalize buffered hits that nothing in flight can outrank.
+                // The queue head is part of the barrier: dispatch order is
+                // monotone, so it only ever bites after a legacy re-queue
+                // inserted a corrected key below already-dispatched ones.
                 long barrier = Long.MAX_VALUE;
+                if (!queue.isEmpty()) {
+                    barrier = queue.peek().distSqr();
+                }
                 for (PendingShadow shadow : shadows) {
                     barrier = Math.min(barrier, shadow.candidate().distSqr());
                 }
@@ -560,6 +608,29 @@ public final class AsyncLocate {
                     return new ShadowDone(shadowVerify(candidate, scratch), scratch);
                 }, mathPool())));
                 pushProgress(hits.size(), checked, startNanos);
+            }
+            // Budget/count exits: verified hits that nothing still in flight
+            // (or still queued) can outrank are results, not waste.
+            long finalBarrier = Long.MAX_VALUE;
+            if (!queue.isEmpty()) {
+                finalBarrier = queue.peek().distSqr();
+            }
+            for (PendingShadow shadow : shadows) {
+                finalBarrier = Math.min(finalBarrier, shadow.candidate().distSqr());
+            }
+            for (PendingLoad load : pending) {
+                finalBarrier = Math.min(finalBarrier, load.candidate.distSqr());
+            }
+            while (!buffered.isEmpty() && buffered.peek().distSqr() <= finalBarrier && hits.size() < count
+                    && !aborted.get()) {
+                LocateMore.Candidate done = buffered.poll();
+                LocateMore.VerifyResult found = done.resolved();
+                if (seen.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))) {
+                    LocateMore.Hit hit = new LocateMore.Hit(found.pos().immutable(), found.holder(),
+                            LocateMore.horizDistSqr(found.pos(), origin));
+                    hits.add(hit);
+                    streamHit(hits.size(), hit);
+                }
             }
             return hits;
         }
@@ -627,7 +698,8 @@ public final class AsyncLocate {
             return ABSENT;
         }
 
-        private static final Object2IntMap<Structure> SCAN_FAILED = new Object2IntOpenHashMap<>();
+        private static final Object2IntMap<Structure> SCAN_FAILED =
+                it.unimi.dsi.fastutil.objects.Object2IntMaps.unmodifiable(new Object2IntOpenHashMap<>());
 
         /**
          * Replicates StructureCheck.tryLoadFromStorage's scan+parse: returns the
@@ -696,7 +768,7 @@ public final class AsyncLocate {
             ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
             Boolean cached = memo.get(pack);
             if (cached != null) {
-                scratch.indexHits++;
+                scratch.memoHits++;
                 return cached;
             }
             HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
@@ -766,7 +838,7 @@ public final class AsyncLocate {
                         hits.size() + " nearest " + printable + " (" + tookMs + " ms async"
                                 + " [present=" + stats.present + " absent=" + stats.absent
                                 + " loads=" + stats.loads + " loadHits=" + stats.loadHits
-                                + " indexHits=" + stats.indexHits + "]"
+                                + " indexHits=" + stats.indexHits + " memoHits=" + stats.memoHits + "]"
                                 + note + probeNote + ")").withStyle(ChatFormatting.GRAY), false);
             });
         }

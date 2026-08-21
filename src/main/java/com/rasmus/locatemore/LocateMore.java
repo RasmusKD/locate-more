@@ -277,6 +277,7 @@ public class LocateMore implements ModInitializer {
         int loads;
         int loadHits;
         int indexHits;
+        int memoHits;
 
         void merge(Stats other) {
             present += other.present;
@@ -284,6 +285,7 @@ public class LocateMore implements ModInitializer {
             loads += other.loads;
             loadHits += other.loadHits;
             indexHits += other.indexHits;
+            memoHits += other.memoHits;
         }
     }
 
