@@ -5,7 +5,7 @@
   "name": "LocateMore",
   "description": "Adds a count to /locate structure, so one command finds the N nearest instead of just the closest.",
   "authors": [
-    "Rasmus"
+    "RasmusKD"
   ],
   "license": "MIT",
   "environment": "*",
@@ -22,5 +22,9 @@
   },
   "mixins": [
     "locatemore.mixins.json"
-  ]
+  ],
+  "contact": {
+    "homepage": "https://github.com/RasmusKD/locate-more",
+    "sources": "https://github.com/RasmusKD/locate-more"
+  }
 }
