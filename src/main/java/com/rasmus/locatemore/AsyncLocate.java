@@ -603,10 +603,7 @@ public final class AsyncLocate {
                     continue;
                 }
                 checked++;
-                shadows.add(new PendingShadow(candidate, CompletableFuture.supplyAsync(() -> {
-                    LocateMore.Stats scratch = new LocateMore.Stats();
-                    return new ShadowDone(shadowVerify(candidate, scratch), scratch);
-                }, mathPool())));
+                shadows.add(new PendingShadow(candidate, dispatchShadow(candidate)));
                 pushProgress(hits.size(), checked, startNanos);
             }
             // Budget/count exits: verified hits that nothing still in flight
@@ -653,24 +650,51 @@ public final class AsyncLocate {
         private static final Shadow ABSENT = new Shadow(null, false);
 
         /**
-         * Shadow of vanilla's checkStart per structure, without touching the
-         * thread-confined StructureCheck: one disk scan per candidate chunk,
-         * then vanilla's exact per-structure decision order. Runs on the math
-         * pool; counts into the given scratch, merged by the worker on harvest.
+         * Shadow of vanilla's checkStart per candidate, without touching the
+         * thread-confined StructureCheck, built as a non-blocking chain: the
+         * IOWorker scan future feeds straight into a math-pool continuation,
+         * so pool threads never park on disk waits (the IOWorker serializes
+         * scans internally anyway; the win is overlap, not scan parallelism).
          */
-        private Shadow shadowVerify(LocateMore.Candidate candidate, LocateMore.Stats scratch) {
+        private CompletableFuture<ShadowDone> dispatchShadow(LocateMore.Candidate candidate) {
+            LocateMore.Stats scratch = new LocateMore.Stats();
             ChunkPos pos = candidate.pos();
-            Object2IntMap<Structure> onDisk;
             if (index.isKnownAbsentFromDisk(pos.pack())) {
                 // Authoritative negative: skip the disk scan, straight to math.
                 scratch.indexHits++;
-                onDisk = null;
-            } else {
-                onDisk = scanStarts(pos);
-                if (onDisk == null) {
-                    INDEX_MUTATIONS.add(new IndexMutation(index, pos.pack(), true));
-                }
+                return CompletableFuture.supplyAsync(
+                        () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());
             }
+            CollectFields collector = new CollectFields(
+                    new FieldSelector(IntTag.TYPE, "DataVersion"),
+                    new FieldSelector("Level", "Structures", CompoundTag.TYPE, "Starts"),
+                    new FieldSelector("structures", CompoundTag.TYPE, "starts"));
+            // The timeout also covers the IOWorker shutdown trap: futures are
+            // never completed after close, but orTimeout fires regardless.
+            return scanAccess.scanChunk(pos, collector)
+                    .orTimeout(SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                    .handle((ignored, failure) -> failure)
+                    .thenApplyAsync(failure -> {
+                        Object2IntMap<Structure> onDisk;
+                        if (failure != null) {
+                            if (!(failure instanceof java.util.concurrent.TimeoutException)) {
+                                LOGGER.warn("Failed to read chunk {}", pos, failure);
+                            }
+                            onDisk = SCAN_FAILED;
+                        } else {
+                            onDisk = parseStarts(pos, collector);
+                            if (onDisk == null) {
+                                INDEX_MUTATIONS.add(new IndexMutation(index, pos.pack(), true));
+                            }
+                        }
+                        return new ShadowDone(decide(candidate, onDisk, scratch), scratch);
+                    }, mathPool());
+        }
+
+        /** Vanilla's exact per-structure decision order, given the scan outcome. */
+        private Shadow decide(LocateMore.Candidate candidate, Object2IntMap<Structure> onDisk,
+                LocateMore.Stats scratch) {
+            ChunkPos pos = candidate.pos();
             if (onDisk == SCAN_FAILED) {
                 return NEEDS_LOAD;
             }
@@ -702,30 +726,12 @@ public final class AsyncLocate {
                 it.unimi.dsi.fastutil.objects.Object2IntMaps.unmodifiable(new Object2IntOpenHashMap<>());
 
         /**
-         * Replicates StructureCheck.tryLoadFromStorage's scan+parse: returns the
-         * chunk's start map, null when the chunk is not on disk (or carries no
-         * structure data), or {@link #SCAN_FAILED} when vanilla would answer
-         * CHUNK_LOAD_NEEDED because the scan or datafix failed.
+         * Replicates StructureCheck.tryLoadFromStorage's parse half against a
+         * completed scan: returns the chunk's start map, null when the chunk
+         * carries no structure data on disk, or {@link #SCAN_FAILED} when
+         * vanilla would answer CHUNK_LOAD_NEEDED because the datafix failed.
          */
-        private Object2IntMap<Structure> scanStarts(ChunkPos pos) {
-            CollectFields collector = new CollectFields(
-                    new FieldSelector(IntTag.TYPE, "DataVersion"),
-                    new FieldSelector("Level", "Structures", CompoundTag.TYPE, "Starts"),
-                    new FieldSelector("structures", CompoundTag.TYPE, "starts"));
-            try {
-                // Blocking get, not a poll loop: wakes the moment the scan
-                // completes. The timeout covers the shutdown trap (IOWorker
-                // futures never complete after close).
-                scanAccess.scanChunk(pos, collector).get(SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                return SCAN_FAILED;
-            } catch (java.util.concurrent.TimeoutException e) {
-                return SCAN_FAILED;
-            } catch (Exception e) {
-                LOGGER.warn("Failed to read chunk {}", pos, e);
-                return SCAN_FAILED;
-            }
+        private Object2IntMap<Structure> parseStarts(ChunkPos pos, CollectFields collector) {
             Tag result = collector.getResult();
             if (!(result instanceof CompoundTag chunkTag)) {
                 return null;
