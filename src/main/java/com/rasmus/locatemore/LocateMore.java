@@ -134,9 +134,9 @@ public class LocateMore implements ModInitializer {
 
     /**
      * Measurement tooling: /locatemore cache stats|clear inspects and clears
-     * vanilla's in-memory StructureCheck caches (via accessor mixin) and our
-     * persistent index, so cold/warm timings can be decomposed in a single
-     * session instead of relying on rejoin experiments.
+     * vanilla's in-memory StructureCheck caches (via accessor mixin), so
+     * cold/warm timings can be decomposed in a single session instead of
+     * relying on rejoin experiments.
      */
     private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
@@ -146,11 +146,9 @@ public class LocateMore implements ModInitializer {
                             ServerLevel level = ctx.getSource().getLevel();
                             var check = (com.rasmus.locatemore.mixin.StructureCheckAccessor)
                                     ((com.rasmus.locatemore.mixin.ServerLevelStructureAccessor) level).locatemore$structureCheck();
-                            int index = level.getDataStorage().computeIfAbsent(StructureIndex.TYPE).size();
                             ctx.getSource().sendSuccess(() -> Component.literal(
                                     "StructureCheck: " + check.locatemore$loadedChunks().size() + " chunk entries, "
-                                            + check.locatemore$featureChecks().size() + " feature maps. "
-                                            + "LocateMore index: " + index + " absent-chunk entries."), false);
+                                            + check.locatemore$featureChecks().size() + " feature maps."), false);
                             return 1;
                         }))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear").executes(ctx -> {
@@ -200,15 +198,11 @@ public class LocateMore implements ModInitializer {
                         .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
                                         "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
                                 .executes(ctx -> verifyShadow(ctx, 20))))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("index")
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("memo")
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear").executes(ctx -> {
-                            StructureIndex index = ctx.getSource().getLevel().getDataStorage()
-                                    .computeIfAbsent(StructureIndex.TYPE);
-                            int size = index.size();
-                            index.clear();
                             AsyncLocate.clearMathMemo();
                             ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "Cleared LocateMore index (" + size + " entries) and the math memo."), false);
+                                    "Cleared the math memo."), false);
                             return 1;
                         }))));
     }
@@ -420,7 +414,6 @@ public class LocateMore implements ModInitializer {
         int loadHits;
         int regionSkips;
         int mathSkips;
-        int indexHits;
         int memoHits;
 
         void merge(Stats other) {
@@ -430,7 +423,6 @@ public class LocateMore implements ModInitializer {
             loadHits += other.loadHits;
             regionSkips += other.regionSkips;
             mathSkips += other.mathSkips;
-            indexHits += other.indexHits;
             memoHits += other.memoHits;
         }
     }

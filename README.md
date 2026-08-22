@@ -44,40 +44,41 @@ Four mechanisms carry the speed:
   runs the biome math on a small thread pool, and sends the few candidates
   that need chunk generation to the server thread in a budgeted queue. An
   ordering barrier keeps the streamed results nearest-first.
-- **A persistent index of negative results.** Each dimension saves a small
-  file that records which candidate chunks are absent from disk. The file
-  survives restarts. The index is strictly negative: it skips work and never
-  produces an answer. A stale entry costs one redundant lookup. Positive
-  findings are always re-verified against the world.
 - **A session memo for the biome math.** The memo is not saved on purpose,
-  because datapacks can change generation without changing the seed.
+  because datapacks can change generation without changing the seed. It is
+  the mod's only cache, and it lives only in memory: nothing is persisted,
+  so nothing can go stale across sessions. Earlier versions also kept a
+  persistent negative index; once the region catalog existed, an A/B
+  measurement showed the index saved zero measurable time, so it was
+  deleted (an orphaned `structure_index` file in old worlds is harmless).
 
 ## Measured
 
 Release build, virgin world, seed 20260821, fixed position, 20 of each
 structure. Reproducible.
 
-| structure | first ever (cold) | after restart (index only) | warm |
-|---|---|---|---|
-| jungle_pyramid | 6.5 s | 0.92 s | 0.18 s |
-| desert_pyramid | 11.7 s | 1.9 s | n/a |
-| #village (tag) | 5.2 s | | |
-| shipwreck | 0.34 s | | |
-| fortress (Nether) | 0.39 s | | |
-| stronghold | 0.35 s | | |
+Cold search, nothing warm, count 20 where the structure allows it:
 
-The restart column is the persistent index alone: the session memo is empty
-after a restart, and the counters in the summary line prove it (memoHits=0).
+| structure | cold | warm (memo) |
+|---|---|---|
+| mansion | 0.16 s | |
+| ancient_city | 0.11 s | |
+| monument | 0.22 s | |
+| jungle_pyramid (20 nearest) | 0.98 s | 0.06 s |
+| #village (tag, multi-set) | 1.4 s | |
+| fortress (Nether, multi-set) | 0.19 s | |
+
+Single-set structures are pure math: zero chunks loaded or generated, at any
+count. Before shipping that shortcut, a built-in referee counted 100%
+math-vs-generation agreement across the whole single-set battery, and an
+async search returned positions identical to the generation-backed sync mode
+from the same origin. Multi-set structures (villages, nether complexes)
+verify through real generation, and the `math=` counter in the summary line
+referees every such load.
+
 Control, same world and warm cache: repeated vanilla nearest-searches took 10
 seconds and found 13 of 20. The lab mode `vanilla` reproduces that method. The
 async search never blocks a tick.
-
-Since 1.3 the table above only describes multi-structure sets. A cold search
-for any single-set structure is pure math: mansion 0.16 s, ancient city
-0.11 s, monument 0.22 s, each with zero chunks loaded or generated. Before
-shipping the shortcut, the referee counted 100% math-vs-generation agreement
-across the whole single-set battery, and an async search returned positions
-identical to the generation-backed sync mode from the same origin.
 
 ## API for other mods
 
@@ -112,10 +113,10 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
   same for every structure. Each probe adds 4 to 12 KB to the world save, and
   the summary line reports the count. Single-set structures need no probes
   since 1.3.
-- The index assumes stable generation rules. If a datapack or mod changes
-  where structures can generate mid-world, run `/locatemore index clear`. A
-  stale entry can hide a structure under the new rules. It can never invent
-  one.
+- Nothing persists between sessions, so there is no state to go stale across
+  restarts. Within a session, a datapack reload aborts running searches and
+  clears the math memo automatically; `/locatemore memo clear` does the same
+  by hand.
 - Default bounds: 1,000,000 block radius, 60 second wall clock, 50,000
   candidate checks, 2 concurrent searches. Partial results say so. All of
   them, plus a switch that forbids probe chunk generation entirely, live in
@@ -132,9 +133,9 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 | `/locate structure <id> <count> next` | same, skipping the structure you stand in |
 | `/locate structure <id> <count> sync` | same algorithm, synchronous, for measurements (config-gated) |
 | `/locate structure <id> <count> vanilla` | vanilla-method lab, for measurements (config-gated) |
-| `/locatemore cache stats` | cache and index sizes |
+| `/locatemore cache stats` | vanilla cache sizes |
 | `/locatemore cache clear` | clear vanilla's in-memory caches |
-| `/locatemore index clear` | wipe this dimension's index and the session memo |
+| `/locatemore memo clear` | wipe the session math memo |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
 | `/locatemore prune` | delete empty region files left by pre-1.2.1 scans |
 | `/locatemore apitest <structure> <count>` | run the public API end to end |

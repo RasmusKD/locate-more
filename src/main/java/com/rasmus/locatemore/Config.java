@@ -34,8 +34,6 @@ public final class Config {
      * summary reports a partial result; the world save never grows.
      */
     public static volatile boolean allowProbeChunkGeneration = true;
-    /** Persist the negative index across restarts. */
-    public static volatile boolean persistentIndex = true;
     /** Expose the synchronous benchmark modes (sync/vanilla) to admins. */
     public static volatile boolean enableBenchmarkModes = false;
     /**
@@ -73,9 +71,6 @@ public final class Config {
                     if (json.has("allowProbeChunkGeneration")) {
                         allowProbeChunkGeneration = json.get("allowProbeChunkGeneration").getAsBoolean();
                     }
-                    if (json.has("persistentIndex")) {
-                        persistentIndex = json.get("persistentIndex").getAsBoolean();
-                    }
                     if (json.has("enableBenchmarkModes")) {
                         enableBenchmarkModes = json.get("enableBenchmarkModes").getAsBoolean();
                     }
@@ -93,7 +88,6 @@ public final class Config {
         out.addProperty("maxCount", maxCount);
         out.addProperty("maxActiveSearches", maxActiveSearches);
         out.addProperty("allowProbeChunkGeneration", allowProbeChunkGeneration);
-        out.addProperty("persistentIndex", persistentIndex);
         out.addProperty("enableBenchmarkModes", enableBenchmarkModes);
         out.addProperty("improveVanillaLocate", improveVanillaLocate);
         try {

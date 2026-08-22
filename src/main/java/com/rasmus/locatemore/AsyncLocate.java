@@ -91,11 +91,6 @@ public final class AsyncLocate {
 
     private static final Map<Object, Task> ACTIVE = new ConcurrentHashMap<>();
     private static final ConcurrentLinkedQueue<PendingLoad> INCOMING_LOADS = new ConcurrentLinkedQueue<>();
-    /** Worker-side observations; applied to the index on the server thread only. */
-    private record IndexMutation(StructureIndex index, long chunk, boolean absent) {
-    }
-
-    private static final ConcurrentLinkedQueue<IndexMutation> INDEX_MUTATIONS = new ConcurrentLinkedQueue<>();
     private static ExecutorService worker;
     private static int loadsInFlight;
 
@@ -168,10 +163,8 @@ public final class AsyncLocate {
             while ((pending = INCOMING_LOADS.poll()) != null) {
                 pending.result.complete(null);
             }
-            // Apply outstanding index observations so the final world save
-            // carries them, and reset the in-flight counter (completion
-            // callbacks on the dying server executor may never run).
-            drainIndexMutations();
+            // Reset the in-flight counter; completion callbacks on the dying
+            // server executor may never run.
             loadsInFlight = 0;
             if (worker != null) {
                 worker.shutdownNow();
@@ -275,9 +268,6 @@ public final class AsyncLocate {
             }
         }
 
-        StructureIndex index = level.getDataStorage().computeIfAbsent(StructureIndex.TYPE);
-        index.validate(state.getLevelSeed(), configFingerprint(level));
-
         // How many structures share each placement's set: a one-member set has
         // no weighted draw, so the math verdict is generation's verdict.
         Map<StructurePlacement, Integer> setSizeByPlacement = new java.util.IdentityHashMap<>();
@@ -294,41 +284,7 @@ public final class AsyncLocate {
                 level.getStructureManager(),
                 LevelHeightAccessor.create(level.getMinY(), level.getHeight()),
                 level.getChunkSource().chunkScanner(),
-                server.getFixerUpper(), state.getLevelSeed(), index);
-    }
-
-    /**
-     * Fingerprint of the generation config the index depends on: the
-     * structure-set registry (ids, placement class, spacing/separation) and
-     * the game data version. Salt/frequency are not readable through public
-     * API, so a pure parameter tweak inside an existing set is not covered;
-     * the README documents /locatemore index clear for that case.
-     */
-    private static int configFingerprint(ServerLevel level) {
-        int hash = net.minecraft.SharedConstants.getCurrentVersion().dataVersion().version();
-        // The math path reads biomes and noise settings, so those registries
-        // must invalidate the index too (round-4 consensus finding).
-        for (var regKey : List.of(Registries.BIOME, Registries.NOISE_SETTINGS)) {
-            List<String> ids = new ArrayList<>();
-            for (var e : level.registryAccess().lookupOrThrow(regKey).entrySet()) {
-                ids.add(e.getKey().identifier().toString());
-            }
-            java.util.Collections.sort(ids);
-            hash = 31 * hash + ids.hashCode();
-        }
-        var registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
-        List<String> parts = new ArrayList<>();
-        for (var entry : registry.entrySet()) {
-            StructurePlacement placement = entry.getValue().placement();
-            StringBuilder part = new StringBuilder(entry.getKey().identifier().toString())
-                    .append('|').append(placement.getClass().getSimpleName());
-            if (placement instanceof RandomSpreadStructurePlacement spread) {
-                part.append('|').append(spread.spacing()).append(':').append(spread.separation());
-            }
-            parts.add(part.toString());
-        }
-        java.util.Collections.sort(parts);
-        return 31 * hash + parts.hashCode();
+                server.getFixerUpper(), state.getLevelSeed());
     }
 
     /**
@@ -402,21 +358,7 @@ public final class AsyncLocate {
         }
     }
 
-    private static void drainIndexMutations() {
-        IndexMutation mutation;
-        Set<StructureIndex> mutated = new HashSet<>();
-        while ((mutation = INDEX_MUTATIONS.poll()) != null) {
-            if (mutation.index().apply(mutation.chunk(), mutation.absent())) {
-                mutated.add(mutation.index());
-            }
-        }
-        for (StructureIndex index : mutated) {
-            index.setDirty();
-        }
-    }
-
     private static void pumpLoads(MinecraftServer server) {
-        drainIndexMutations();
         while (loadsInFlight < MAX_CHUNK_LOADS_IN_FLIGHT) {
             PendingLoad pending = INCOMING_LOADS.poll();
             if (pending == null) {
@@ -472,9 +414,6 @@ public final class AsyncLocate {
                         if (pending.knownAbsent) {
                             pending.task.chunksGenerated++;
                         }
-                        // The chunk now exists (it reaches disk on save); a stale entry
-                        // would only cost a redundant load, but keep it honest.
-                        INDEX_MUTATIONS.add(new IndexMutation(pending.task.index, pos.pack(), false));
                         // Chunk is resident and vanilla's cache warm via
                         // onStructureLoad, so the vanilla-exact check is cheap.
                         // Scratch stats: the worker already counted this load.
@@ -535,7 +474,6 @@ public final class AsyncLocate {
         final ChunkScanAccess scanAccess;
         final DataFixer fixer;
         final long seed;
-        final StructureIndex index;
 
         final AtomicBoolean aborted = new AtomicBoolean();
         /** Candidates lost to resolution failure or the probe-generation switch. */
@@ -561,7 +499,7 @@ public final class AsyncLocate {
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
                 RandomState randomState, StructureTemplateManager templateManager, LevelHeightAccessor heightAccessor,
-                ChunkScanAccess scanAccess, DataFixer fixer, long seed, StructureIndex index) {
+                ChunkScanAccess scanAccess, DataFixer fixer, long seed) {
             this.server = server;
             this.dimension = dimension;
             this.source = source;
@@ -584,7 +522,6 @@ public final class AsyncLocate {
             this.scanAccess = scanAccess;
             this.fixer = fixer;
             this.seed = seed;
-            this.index = index;
             this.playerId = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : null;
         }
 
@@ -845,12 +782,6 @@ public final class AsyncLocate {
         private CompletableFuture<ShadowDone> dispatchShadow(LocateMore.Candidate candidate) {
             LocateMore.Stats scratch = new LocateMore.Stats();
             ChunkPos pos = candidate.pos();
-            if (Config.persistentIndex && index.isKnownAbsentFromDisk(pos.pack())) {
-                // Authoritative negative: skip the disk scan, straight to math.
-                scratch.indexHits++;
-                return CompletableFuture.supplyAsync(
-                        () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());
-            }
             if (regions != null && !regions.contains(ChunkPos.pack(pos.x() >> 5, pos.z() >> 5))) {
                 // No region file, so the chunk cannot be on disk: straight to
                 // math. A region saved after the listing costs one redundant
@@ -875,9 +806,6 @@ public final class AsyncLocate {
                             onDisk = SCAN_FAILED;
                         } else {
                             onDisk = parseStarts(pos, collector);
-                            if (onDisk == null && Config.persistentIndex) {
-                                INDEX_MUTATIONS.add(new IndexMutation(index, pos.pack(), true));
-                            }
                         }
                         return new ShadowDone(decide(candidate, onDisk, scratch), scratch);
                     }, mathPool());
@@ -1039,7 +967,7 @@ public final class AsyncLocate {
                                 + " [present=" + stats.present + " absent=" + stats.absent
                                 + " loads=" + stats.loads + " loadHits=" + stats.loadHits
                                 + " regionSkips=" + stats.regionSkips
-                                + " indexHits=" + stats.indexHits + " memoHits=" + stats.memoHits + "]"
+                                + " memoHits=" + stats.memoHits + "]"
                                 + mathNote + note + probeNote + ")").withStyle(ChatFormatting.GRAY), false);
             });
         }
