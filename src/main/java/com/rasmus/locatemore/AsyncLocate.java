@@ -101,7 +101,11 @@ public final class AsyncLocate {
      * Session memo of generation-point math verdicts, mirroring vanilla's
      * featureChecks. Shared by the math pool, so fully concurrent; deliberately
      * NOT persisted (datapacks can shift biome math without changing the seed).
-     * Bounded, cleared on server stop.
+     * Bounded, cleared on server stop and on datapack reload.
+     *
+     * Justifying measurement (seed 20260821, jungle_pyramid 20): repeat
+     * searches drop from ~1.5 s to 274 ms with memoHits=1505. If memoHits
+     * reads near zero in real use, delete the memo.
      */
     /** Structures can exist in several dimensions with different generators. */
     private record MemoKey(ResourceKey<Level> dimension, Structure structure) {

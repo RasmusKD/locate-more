@@ -22,6 +22,10 @@ import net.minecraft.world.level.saveddata.SavedDataType;
  * candidate chunks (one per region, so density stays low), delta-encoded on
  * save and capped at two million entries.
  *
+ * Justifying measurement (seed 20260821, jungle_pyramid 20): first search
+ * after a restart is 923 ms with the index vs 3.4 s rebuilding without it.
+ * If that ratio ever stops holding, delete this class first.
+ *
  * Thread model: reads from the search worker, mutations applied on the server
  * thread only (AsyncLocate drains a queue per tick); both synchronize here.
  */
