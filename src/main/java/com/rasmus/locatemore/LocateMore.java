@@ -419,6 +419,7 @@ public class LocateMore implements ModInitializer {
         int loads;
         int loadHits;
         int regionSkips;
+        int mathSkips;
         int indexHits;
         int memoHits;
 
@@ -428,6 +429,7 @@ public class LocateMore implements ModInitializer {
             loads += other.loads;
             loadHits += other.loadHits;
             regionSkips += other.regionSkips;
+            mathSkips += other.mathSkips;
             indexHits += other.indexHits;
             memoHits += other.memoHits;
         }
@@ -637,6 +639,15 @@ public class LocateMore implements ModInitializer {
             if (candidate.resolved() != null) {
                 found = candidate.resolved();
             } else {
+                // Generation's own placement filter: frequency, then exclusion
+                // zones. Skipping these probed chunks generation would refuse.
+                if (!candidate.placement().applyAdditionalChunkRestrictions(
+                        candidate.pos().x(), candidate.pos().z(), seed)
+                        || !candidate.placement().applyInteractionsWithOtherStructures(
+                                state, candidate.pos().x(), candidate.pos().z())) {
+                    stats.absent++;
+                    continue;
+                }
                 checkedOut[0]++;
                 found = verify(candidate.holders(), level, structureManager,
                         candidate.placement(), candidate.pos(), stats);

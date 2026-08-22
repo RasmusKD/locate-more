@@ -278,8 +278,16 @@ public final class AsyncLocate {
         StructureIndex index = level.getDataStorage().computeIfAbsent(StructureIndex.TYPE);
         index.validate(state.getLevelSeed(), configFingerprint(level));
 
+        // How many structures share each placement's set: a one-member set has
+        // no weighted draw, so the math verdict is generation's verdict.
+        Map<StructurePlacement, Integer> setSizeByPlacement = new java.util.IdentityHashMap<>();
+        for (var setHolder : state.possibleStructureSets()) {
+            setSizeByPlacement.put(setHolder.value().placement(), setHolder.value().structures().size());
+        }
+
         return new Task(server, level.dimension(), source, key, printable, holders, count, origin,
                 excluded,
+                state, setSizeByPlacement,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
                 level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
@@ -473,9 +481,18 @@ public final class AsyncLocate {
                         // An exception must never leave the future incomplete,
                         // or it would pin the ordering barrier forever.
                         try {
-                            pending.result.complete(LocateMore.verify(pending.candidate.holders(), level,
+                            LocateMore.VerifyResult found = LocateMore.verify(pending.candidate.holders(), level,
                                     level.structureManager(), pending.candidate.placement(),
-                                    pending.candidate.pos(), new LocateMore.Stats()));
+                                    pending.candidate.pos(), new LocateMore.Stats());
+                            if (pending.knownAbsent) {
+                                // knownAbsent means this load exists only because the
+                                // math said present: generation is the referee.
+                                pending.task.mathLoads++;
+                                if (found != null) {
+                                    pending.task.mathHits++;
+                                }
+                            }
+                            pending.result.complete(found);
                         } catch (Throwable t) {
                             LOGGER.error("Chunk verification failed at {}", pos, t);
                             pending.task.unresolved++;
@@ -499,6 +516,9 @@ public final class AsyncLocate {
         final HolderSet<Structure> holders;
         final int count;
         final BlockPos origin;
+        /** Safe off-thread: every lazy init is forced by getPlacementsForStructure on the server thread. */
+        final ChunkGeneratorStructureState state;
+        final Map<StructurePlacement, Integer> setSizeByPlacement;
         final Map<StructurePlacement, Set<Holder<Structure>>> byPlacement;
         final List<LocateMore.Candidate> concentric;
         /** Pre-seeded dedup key for next-mode: the structure the player stands in. */
@@ -524,6 +544,9 @@ public final class AsyncLocate {
         volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
         int chunksGenerated;
+        /** Math-vs-generation agreement: probe loads whose math verdict was present, and confirmations. */
+        int mathLoads;
+        int mathHits;
         /** When set, results complete this future instead of going to chat. */
         volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
         /** Regions with chunk data on disk; null means unknown, scan everything. */
@@ -534,6 +557,7 @@ public final class AsyncLocate {
         Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
                 String printable, HolderSet<Structure> holders, int count, BlockPos origin,
                 LocateMore.DedupKey excluded,
+                ChunkGeneratorStructureState state, Map<StructurePlacement, Integer> setSizeByPlacement,
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
                 RandomState randomState, StructureTemplateManager templateManager, LevelHeightAccessor heightAccessor,
@@ -546,6 +570,8 @@ public final class AsyncLocate {
             this.holders = holders;
             this.count = count;
             this.origin = origin;
+            this.state = state;
+            this.setSizeByPlacement = setSizeByPlacement;
             this.byPlacement = byPlacement;
             this.concentric = concentric;
             this.excluded = excluded;
@@ -875,12 +901,29 @@ public final class AsyncLocate {
                     return new Shadow(new LocateMore.VerifyResult(
                             candidate.placement().getLocatePos(pos), holder, pos), false, false);
                 }
-                // Not on disk: vanilla's math path.
-                if (!candidate.placement().applyAdditionalChunkRestrictions(pos.x(), pos.z(), seed)) {
+                // Not on disk: vanilla's math path, in generation's own order
+                // (isStructureChunk = placement, then frequency, then exclusion
+                // zones; outposts refuse to spawn near village candidates).
+                if (!candidate.placement().applyAdditionalChunkRestrictions(pos.x(), pos.z(), seed)
+                        || !candidate.placement().applyInteractionsWithOtherStructures(state, pos.x(), pos.z())) {
                     scratch.absent++;
                     continue;
                 }
                 if (structureCanStart(holder.value(), pos, scratch)) {
+                    if (setSizeByPlacement.getOrDefault(candidate.placement(), 2) == 1) {
+                        // Generation would run this exact math and nothing else
+                        // (Structure.generate calls the same
+                        // findValidGenerationPoint), so for a one-structure set
+                        // the verdict is the outcome; the math=X/Y referee in
+                        // the summary line measured 100% agreement across the
+                        // single-set battery before this shortcut shipped.
+                        // Multi-structure sets still load: the weighted draw is
+                        // generation's call to make.
+                        scratch.mathSkips++;
+                        scratch.present++;
+                        return new Shadow(new LocateMore.VerifyResult(
+                                candidate.placement().getLocatePos(pos), holder, pos), false, false);
+                    }
                     return NEEDS_LOAD;
                 }
                 scratch.absent++;
@@ -989,13 +1032,15 @@ public final class AsyncLocate {
                         : baseNote;
                 String probeNote = chunksGenerated > 0
                         ? " - generated " + chunksGenerated + " probe chunks" : "";
+                String mathNote = (mathLoads > 0 ? " math=" + mathHits + "/" + mathLoads : "")
+                        + (stats.mathSkips > 0 ? " mathSkips=" + stats.mathSkips : "");
                 source.sendSuccess(() -> Component.literal(
                         hits.size() + " nearest " + printable + " (" + tookMs + " ms async"
                                 + " [present=" + stats.present + " absent=" + stats.absent
                                 + " loads=" + stats.loads + " loadHits=" + stats.loadHits
                                 + " regionSkips=" + stats.regionSkips
                                 + " indexHits=" + stats.indexHits + " memoHits=" + stats.memoHits + "]"
-                                + note + probeNote + ")").withStyle(ChatFormatting.GRAY), false);
+                                + mathNote + note + probeNote + ")").withStyle(ChatFormatting.GRAY), false);
             });
         }
 

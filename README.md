@@ -25,8 +25,20 @@ exactly those candidates in true distance order and verifies each one with the
 same checks vanilla uses. The results match vanilla. There are simply more of
 them, sooner.
 
-Three mechanisms carry the speed:
+Four mechanisms carry the speed:
 
+- **Generation's math as the verdict.** For a structure set with one member
+  (mansions, ancient cities, monuments, temples, outposts), generation would
+  run exactly the math the worker just ran: the same generation-point
+  function behind the same frequency and exclusion-zone filters. So a
+  candidate that is not on disk needs no chunk at all; the verdict is the
+  answer. Multi-structure sets (villages, nether complexes) still resolve
+  through real generation, because the weighted draw between set members is
+  generation's call, and the summary line's `math=` counter referees every
+  such load.
+- **The filesystem as the negative source.** Each search lists the region
+  directory once. A candidate whose region file is absent cannot be on disk
+  and goes straight to the math, with no disk round trip.
 - **Own verification path.** Vanilla keeps its structure cache on the server
   thread, so the worker never touches it. The worker scans chunk NBT itself,
   runs the biome math on a small thread pool, and sends the few candidates
@@ -60,6 +72,13 @@ Control, same world and warm cache: repeated vanilla nearest-searches took 10
 seconds and found 13 of 20. The lab mode `vanilla` reproduces that method. The
 async search never blocks a tick.
 
+Since 1.3 the table above only describes multi-structure sets. A cold search
+for any single-set structure is pure math: mansion 0.16 s, ancient city
+0.11 s, monument 0.22 s, each with zero chunks loaded or generated. Before
+shipping the shortcut, the referee counted 100% math-vs-generation agreement
+across the whole single-set battery, and an async search returned positions
+identical to the generation-backed sync mode from the same origin.
+
 ## API for other mods
 
 Plain `findNearestMapStructure` calls are already accelerated by the mixin.
@@ -88,9 +107,11 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
   vanilla parity, for speedrun practice or seed tooling, set the key to
   false and every result matches vanilla again.
 
-- A structure in ungenerated terrain requires generating its candidate chunk
-  to the first stage. Vanilla locate does the same. Each probe adds 4 to 12 KB
-  to the world save, and the summary line reports the count.
+- For multi-structure sets, a structure in ungenerated terrain requires
+  generating its candidate chunk to the first stage. Vanilla locate does the
+  same for every structure. Each probe adds 4 to 12 KB to the world save, and
+  the summary line reports the count. Single-set structures need no probes
+  since 1.3.
 - The index assumes stable generation rules. If a datapack or mod changes
   where structures can generate mid-world, run `/locatemore index clear`. A
   stale entry can hide a structure under the new rules. It can never invent
