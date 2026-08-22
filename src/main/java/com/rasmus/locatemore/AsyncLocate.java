@@ -185,6 +185,11 @@ public final class AsyncLocate {
     // ------------------------------------------------------------------
 
     public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders, int count) {
+        return start(source, printable, holders, count, null);
+    }
+
+    public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders, int count,
+            LocateMore.DedupKey excluded) {
         MinecraftServer server = source.getServer();
         ServerLevel level = source.getLevel();
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
@@ -220,6 +225,7 @@ public final class AsyncLocate {
 
         Object key = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console";
         Task task = new Task(server, level.dimension(), source, key, printable, holders, count, origin,
+                excluded,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
                 level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
@@ -421,6 +427,8 @@ public final class AsyncLocate {
         final BlockPos origin;
         final Map<StructurePlacement, Set<Holder<Structure>>> byPlacement;
         final List<LocateMore.Candidate> concentric;
+        /** Pre-seeded dedup key for next-mode: the structure the player stands in. */
+        final LocateMore.DedupKey excluded;
         final UUID playerId;
 
         // Captured for the shadow check; all safe off-thread per the audit.
@@ -447,6 +455,7 @@ public final class AsyncLocate {
 
         Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
                 String printable, HolderSet<Structure> holders, int count, BlockPos origin,
+                LocateMore.DedupKey excluded,
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
                 RandomState randomState, StructureTemplateManager templateManager, LevelHeightAccessor heightAccessor,
@@ -461,6 +470,7 @@ public final class AsyncLocate {
             this.origin = origin;
             this.byPlacement = byPlacement;
             this.concentric = concentric;
+            this.excluded = excluded;
             this.registryAccess = registryAccess;
             this.generator = generator;
             this.biomeSource = biomeSource;
@@ -528,6 +538,9 @@ public final class AsyncLocate {
 
             List<LocateMore.Hit> hits = new ArrayList<>();
             Set<LocateMore.DedupKey> seen = new HashSet<>();
+            if (excluded != null) {
+                seen.add(excluded); // next-mode: skip the structure the player stands in
+            }
             // Two pipelines share one ordering barrier: shadow verifications
             // (scan + math) fan out to the math pool, chunk loads to the
             // server-thread resolver. Verified hits buffer and are finalized
@@ -728,10 +741,7 @@ public final class AsyncLocate {
                 return CompletableFuture.supplyAsync(
                         () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());
             }
-            CollectFields collector = new CollectFields(
-                    new FieldSelector(IntTag.TYPE, "DataVersion"),
-                    new FieldSelector("Level", "Structures", CompoundTag.TYPE, "Starts"),
-                    new FieldSelector("structures", CompoundTag.TYPE, "starts"));
+            CollectFields collector = ShadowScan.newCollector();
             // The timeout also covers the IOWorker shutdown trap: futures are
             // never completed after close, but orTimeout fires regardless.
             return scanAccess.scanChunk(pos, collector)
@@ -788,48 +798,12 @@ public final class AsyncLocate {
         private static final Object2IntMap<Structure> SCAN_FAILED =
                 it.unimi.dsi.fastutil.objects.Object2IntMaps.unmodifiable(new Object2IntOpenHashMap<>());
 
-        /**
-         * Replicates StructureCheck.tryLoadFromStorage's parse half against a
-         * completed scan: returns the chunk's start map, null when the chunk
-         * carries no structure data on disk, or {@link #SCAN_FAILED} when
-         * vanilla would answer CHUNK_LOAD_NEEDED because the datafix failed.
-         */
         private Object2IntMap<Structure> parseStarts(ChunkPos pos, CollectFields collector) {
-            Tag result = collector.getResult();
-            if (!(result instanceof CompoundTag chunkTag)) {
-                return null;
-            }
-            int version = NbtUtils.getDataVersion(chunkTag);
-            SimpleRegionStorage.injectDatafixingContext(chunkTag,
-                    ChunkMap.getChunkDataFixContextTag(dimension, generator.getTypeNameForDataFixer()));
-            CompoundTag fixed;
-            try {
-                fixed = DataFixTypes.CHUNK.updateToCurrentVersion(fixer, chunkTag, version);
-            } catch (Exception e) {
-                LOGGER.warn("Failed to partially datafix chunk {}", pos, e);
-                return SCAN_FAILED;
-            }
-            Optional<CompoundTag> starts = fixed.getCompound("structures").flatMap(t -> t.getCompound("starts"));
-            if (starts.isEmpty()) {
-                return null;
-            }
-            Object2IntMap<Structure> known = new Object2IntOpenHashMap<>();
-            var registry = registryAccess.lookupOrThrow(Registries.STRUCTURE);
-            starts.get().forEach((name, tag) -> {
-                Identifier id = Identifier.tryParse(name);
-                if (id != null) {
-                    Structure structure = registry.getValue(id);
-                    if (structure != null) {
-                        tag.asCompound().ifPresent(data -> {
-                            if (!"INVALID".equals(data.getStringOr("id", ""))) {
-                                known.put(structure, data.getIntOr("references", 0));
-                            }
-                        });
-                    }
-                }
-            });
-            return known;
+            Object2IntMap<Structure> parsed = ShadowScan.parse(collector, pos, dimension,
+                    generator.getTypeNameForDataFixer(), fixer, registryAccess);
+            return parsed == ShadowScan.SCAN_FAILED ? SCAN_FAILED : parsed;
         }
+
 
         private boolean structureCanStart(Structure structure, ChunkPos pos, LocateMore.Stats scratch) {
             long pack = pos.pack();

@@ -4,7 +4,8 @@
   "compatibilityLevel": "JAVA_21",
   "mixins": [
     "StructureCheckAccessor",
-    "ServerLevelStructureAccessor"
+    "ServerLevelStructureAccessor",
+    "ChunkGeneratorMixin"
   ],
   "injectors": {
     "defaultRequire": 1

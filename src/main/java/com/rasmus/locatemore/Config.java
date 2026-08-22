@@ -38,6 +38,12 @@ public final class Config {
     public static volatile boolean persistentIndex = true;
     /** Expose the synchronous benchmark modes (sync/vanilla) to admins. */
     public static volatile boolean enableBenchmarkModes = false;
+    /**
+     * Route vanilla's own nearest-structure search (plain /locate, eyes of
+     * ender, other mods) through the exact-order engine, fixing MC-138887.
+     * Explorer maps keep the vanilla path either way.
+     */
+    public static volatile boolean improveVanillaLocate = true;
 
     private Config() {
     }
@@ -73,6 +79,9 @@ public final class Config {
                     if (json.has("enableBenchmarkModes")) {
                         enableBenchmarkModes = json.get("enableBenchmarkModes").getAsBoolean();
                     }
+                    if (json.has("improveVanillaLocate")) {
+                        improveVanillaLocate = json.get("improveVanillaLocate").getAsBoolean();
+                    }
                 }
             } catch (Exception e) {
                 LOGGER.warn("Could not parse {}; using defaults", path, e);
@@ -86,6 +95,7 @@ public final class Config {
         out.addProperty("allowProbeChunkGeneration", allowProbeChunkGeneration);
         out.addProperty("persistentIndex", persistentIndex);
         out.addProperty("enableBenchmarkModes", enableBenchmarkModes);
+        out.addProperty("improveVanillaLocate", improveVanillaLocate);
         try {
             Files.createDirectories(path.getParent());
             Files.writeString(path, gson.toJson(out), StandardCharsets.UTF_8);

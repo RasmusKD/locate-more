@@ -69,6 +69,9 @@ public class LocateMore implements ModInitializer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("locatemore");
 
+    /** Set while lab mode measures unmodified vanilla, so the mixin steps aside. */
+    public static final ThreadLocal<Boolean> VANILLA_BYPASS = ThreadLocal.withInitial(() -> false);
+
     private static final DynamicCommandExceptionType ERROR_STRUCTURE_INVALID = new DynamicCommandExceptionType(
             id -> Component.translatableEscape("commands.locate.structure.invalid", id));
     private static final DynamicCommandExceptionType ERROR_STRUCTURE_NOT_FOUND = new DynamicCommandExceptionType(
@@ -115,7 +118,9 @@ public class LocateMore implements ModInitializer {
         }
         structureArg.addChild(
                 RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount))
-                        .executes(LocateMore::locateAsync)
+                        .executes(ctx -> locateAsync(ctx, false))
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("next")
+                                .executes(ctx -> locateAsync(ctx, true)))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("sync")
                                 .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_ADMINS))
                                 .requires(src -> Config.enableBenchmarkModes)
@@ -159,6 +164,10 @@ public class LocateMore implements ModInitializer {
                                     "Cleared vanilla StructureCheck caches (" + chunks + " chunk entries)."), false);
                             return 1;
                         })))
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                        "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                .executes(ctx -> verifyShadow(ctx, 20))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("index")
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear").executes(ctx -> {
                             StructureIndex index = ctx.getSource().getLevel().getDataStorage()
@@ -171,7 +180,56 @@ public class LocateMore implements ModInitializer {
                         }))));
     }
 
-    private static int locateAsync(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+    /**
+     * Drift tripwire: compares the replicated shadow parse against vanilla's
+     * independent checkStructurePresence over the nearest candidates, so a
+     * vanilla NBT-layout change surfaces as a report instead of silent drift.
+     */
+    private static int verifyShadow(CommandContext<CommandSourceStack> ctx, int samples)
+            throws CommandSyntaxException {
+        ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
+                ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+        Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        String printable = result.unwrap().map(
+                key -> key.identifier().toString(),
+                tag -> "#" + tag.location());
+        HolderSet<Structure> holders = result.unwrap().map(
+                key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
+                registry::get
+        ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
+        BlockPos origin = BlockPos.containing(source.getPosition());
+        List<Hit> hits = smartLocate(level, holders, origin, samples,
+                System.nanoTime(), new int[1], new Stats());
+        int agree = 0;
+        int shadowMissing = 0;
+        int divergent = 0;
+        for (Hit hit : hits) {
+            ChunkPos chunk = new ChunkPos(hit.pos().getX() >> 4, hit.pos().getZ() >> 4);
+            var shadow = ShadowScan.scanBlocking(level, chunk);
+            if (shadow == ShadowScan.SCAN_FAILED) {
+                continue;
+            }
+            boolean shadowPresent = shadow != null && shadow.containsKey(hit.holder().value());
+            if (shadowPresent) {
+                agree++;
+            } else {
+                // Vanilla found it; the shadow parse did not. A resident chunk
+                // not yet flushed to disk is benign; anything else is drift.
+                shadowMissing++;
+            }
+        }
+        divergent = 0;
+        final String line = "Shadow verify " + printable + ": " + agree + " agree, "
+                + shadowMissing + " unflushed-or-DRIFT of " + hits.size()
+                + " (run right after a save; nonzero after /save-all means parser drift)";
+        source.sendSuccess(() -> Component.literal(line), false);
+        return agree;
+    }
+
+    private static int locateAsync(CommandContext<CommandSourceStack> ctx, boolean skipCurrent)
+            throws CommandSyntaxException {
         ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
                 ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
         CommandSourceStack source = ctx.getSource();
@@ -183,7 +241,18 @@ public class LocateMore implements ModInitializer {
                 key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
                 registry::get
         ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
-        return AsyncLocate.start(source, printable, holders, IntegerArgumentType.getInteger(ctx, "count"));
+        DedupKey excluded = null;
+        if (skipCurrent) {
+            // The structure the player stands in; its chunk is loaded, so this
+            // is a cheap main-thread lookup.
+            StructureStart current = source.getLevel().structureManager()
+                    .getStructureWithPieceAt(BlockPos.containing(source.getPosition()), holders);
+            if (current != null && current.isValid()) {
+                excluded = new DedupKey(current.getChunkPos().pack(), current.getStructure());
+            }
+        }
+        return AsyncLocate.start(source, printable, holders,
+                IntegerArgumentType.getInteger(ctx, "count"), excluded);
     }
 
     /** One confirmed structure, in the order it was found (= distance order in smart mode). */
@@ -356,11 +425,17 @@ public class LocateMore implements ModInitializer {
         int nextRing = 0;
 
         SpreadSource(RandomSpreadStructurePlacement placement, Set<Holder<Structure>> holders, ChunkPos originChunk) {
+            this(placement, holders, originChunk, Integer.MAX_VALUE);
+        }
+
+        SpreadSource(RandomSpreadStructurePlacement placement, Set<Holder<Structure>> holders, ChunkPos originChunk,
+                int ringCap) {
             this.placement = placement;
             this.holders = holders;
             this.originRx = Math.floorDiv(originChunk.x(), placement.spacing());
             this.originRz = Math.floorDiv(originChunk.z(), placement.spacing());
-            this.maxRing = Math.min((int) (maxDistBlocks() / ((long) placement.spacing() * 16)) + 2, 4096);
+            this.maxRing = Math.min(Math.min(
+                    (int) (maxDistBlocks() / ((long) placement.spacing() * 16)) + 2, 4096), ringCap);
         }
 
         /**
@@ -398,8 +473,33 @@ public class LocateMore implements ModInitializer {
         }
     }
 
+    /**
+     * Vanilla-replacement entry: the exact-order engine as a synchronous
+     * nearest-one search honoring the caller's ring radius. gaveUp[0] is set
+     * when a budget stopped the search before the space was exhausted, in
+     * which case the caller must fall back to vanilla rather than trust null.
+     */
+    public static Pair<BlockPos, Holder<Structure>> findNearestExact(ServerLevel level,
+            HolderSet<Structure> holders, BlockPos origin, int ringRadius, boolean[] gaveUp) {
+        long startNanos = System.nanoTime();
+        int[] checked = new int[1];
+        List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(), ringRadius, gaveUp);
+        if (hits.isEmpty()) {
+            return null;
+        }
+        Hit hit = hits.get(0);
+        return Pair.of(hit.pos(), hit.holder());
+    }
+
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats) {
+        return smartLocate(level, holders, origin, count, startNanos, checkedOut, stats,
+                Integer.MAX_VALUE, new boolean[1]);
+    }
+
+    private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
+            BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats,
+            int ringCap, boolean[] gaveUp) {
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
         StructureManager structureManager = level.structureManager();
         long seed = state.getLevelSeed();
@@ -419,7 +519,7 @@ public class LocateMore implements ModInitializer {
         List<SpreadSource> sources = new ArrayList<>();
         for (Map.Entry<StructurePlacement, Set<Holder<Structure>>> entry : byPlacement.entrySet()) {
             if (entry.getKey() instanceof RandomSpreadStructurePlacement spread) {
-                sources.add(new SpreadSource(spread, entry.getValue(), originChunk));
+                sources.add(new SpreadSource(spread, entry.getValue(), originChunk, ringCap));
             } else if (entry.getKey() instanceof ConcentricRingsStructurePlacement rings) {
                 // Strongholds: the full (finite) position list is precomputed by
                 // the game. Nullable when the placement has no registered rings.
@@ -455,6 +555,7 @@ public class LocateMore implements ModInitializer {
                     }
                 }
                 if (overBudget(startNanos, checkedOut[0])) {
+                    gaveUp[0] = true;
                     break search;
                 }
             }
@@ -487,6 +588,7 @@ public class LocateMore implements ModInitializer {
                 }
             }
             if (overBudget(startNanos, checkedOut[0])) {
+                gaveUp[0] = true;
                 break;
             }
         }
@@ -510,8 +612,14 @@ public class LocateMore implements ModInitializer {
         for (int ring = 0; ring <= PROBE_MAX_RING; ring++) {
             for (BlockPos probe : ringProbes(origin, ring)) {
                 probesOut[0]++;
-                Pair<BlockPos, Holder<Structure>> hit = generator.findNearestMapStructure(
-                        level, holders, probe, VANILLA_RADIUS_CHUNKS, false);
+                Pair<BlockPos, Holder<Structure>> hit;
+                VANILLA_BYPASS.set(true);
+                try {
+                    hit = generator.findNearestMapStructure(
+                            level, holders, probe, VANILLA_RADIUS_CHUNKS, false);
+                } finally {
+                    VANILLA_BYPASS.set(false);
+                }
                 if (hit != null) {
                     found.putIfAbsent(hit.getFirst().immutable(), hit.getSecond());
                 }
