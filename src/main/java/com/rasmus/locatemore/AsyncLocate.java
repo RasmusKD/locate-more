@@ -224,7 +224,7 @@ public final class AsyncLocate {
 
         Task previous = ACTIVE.get(key);
         if (previous == null && ACTIVE.size() >= Config.maxActiveSearches) {
-            source.sendFailure(Component.literal("Two searches are already running; try again shortly."));
+            source.sendFailure(Component.literal(Config.maxActiveSearches + " searches are already running; try again shortly."));
             return 0;
         }
         ACTIVE.put(key, task);
@@ -287,11 +287,14 @@ public final class AsyncLocate {
         final Task task;
         final LocateMore.Candidate candidate;
         final CompletableFuture<LocateMore.VerifyResult> result = new CompletableFuture<>();
+        /** False when the load came from a failed scan: the chunk may already exist. */
+        final boolean knownAbsent;
         boolean retried;
 
-        PendingLoad(Task task, LocateMore.Candidate candidate) {
+        PendingLoad(Task task, LocateMore.Candidate candidate, boolean knownAbsent) {
             this.task = task;
             this.candidate = candidate;
+            this.knownAbsent = knownAbsent;
         }
     }
 
@@ -350,7 +353,9 @@ public final class AsyncLocate {
                             }
                             return;
                         }
-                        pending.task.chunksGenerated++;
+                        if (pending.knownAbsent) {
+                            pending.task.chunksGenerated++;
+                        }
                         // The chunk now exists (it reaches disk on save); a stale entry
                         // would only cost a redundant load, but keep it honest.
                         INDEX_MUTATIONS.add(new IndexMutation(pending.task.index, pos.pack(), false));
@@ -458,8 +463,8 @@ public final class AsyncLocate {
                     finish(hits, startNanos, null);
                 }
             } catch (Throwable t) {
-                LOGGER.error("Async locate failed", t);
                 if (!aborted.get()) {
+                    LOGGER.error("Async locate failed", t);
                     finish(List.of(), startNanos, t);
                 }
             } finally {
@@ -513,7 +518,7 @@ public final class AsyncLocate {
                     LocateMore.Candidate candidate = shadow.candidate();
                     if (done.shadow().needsLoad()) {
                         stats.loads++;
-                        PendingLoad load = new PendingLoad(this, candidate);
+                        PendingLoad load = new PendingLoad(this, candidate, done.shadow().knownAbsent());
                         pending.add(load);
                         INCOMING_LOADS.add(load);
                     } else if (done.shadow().result() != null) {
@@ -649,11 +654,14 @@ public final class AsyncLocate {
                     || (System.nanoTime() - startNanos) / 1_000_000L > wallClockLimitMs();
         }
 
-        private record Shadow(LocateMore.VerifyResult result, boolean needsLoad) {
+        private record Shadow(LocateMore.VerifyResult result, boolean needsLoad, boolean knownAbsent) {
         }
 
-        private static final Shadow NEEDS_LOAD = new Shadow(null, true);
-        private static final Shadow ABSENT = new Shadow(null, false);
+        /** Chunk verified absent from disk; resolution will generate it. */
+        private static final Shadow NEEDS_LOAD = new Shadow(null, true, true);
+        /** Scan failed; the chunk may already exist, so a load is not a generation. */
+        private static final Shadow NEEDS_LOAD_SCAN_FAILED = new Shadow(null, true, false);
+        private static final Shadow ABSENT = new Shadow(null, false, false);
 
         /**
          * Shadow of vanilla's checkStart per candidate, without touching the
@@ -702,7 +710,7 @@ public final class AsyncLocate {
                 LocateMore.Stats scratch) {
             ChunkPos pos = candidate.pos();
             if (onDisk == SCAN_FAILED) {
-                return NEEDS_LOAD;
+                return NEEDS_LOAD_SCAN_FAILED;
             }
             for (Holder<Structure> holder : candidate.holders()) {
                 if (onDisk != null) {
@@ -713,7 +721,7 @@ public final class AsyncLocate {
                     }
                     scratch.present++;
                     return new Shadow(new LocateMore.VerifyResult(
-                            candidate.placement().getLocatePos(pos), holder, pos), false);
+                            candidate.placement().getLocatePos(pos), holder, pos), false, false);
                 }
                 // Not on disk: vanilla's math path.
                 if (!candidate.placement().applyAdditionalChunkRestrictions(pos.x(), pos.z(), seed)) {
