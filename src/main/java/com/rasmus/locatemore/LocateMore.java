@@ -81,14 +81,17 @@ public class LocateMore implements ModInitializer {
     private static final long PROBE_TIME_BUDGET_MS = 10_000;
     private static final int PROBE_MAX_RING = 16;
 
-    /** Smart mode gives up past this many blocks out. */
-    static final long MAX_DIST_BLOCKS = 1_000_000;
+    /** Smart mode gives up past this many blocks out (config: maxDistanceBlocks). */
+    static long maxDistBlocks() {
+        return Config.maxDistanceBlocks;
+    }
     /** Safety valves for pathological placements (checked inside expansion too). */
     static final long SMART_TIME_BUDGET_MS = 15_000;
     static final int MAX_CANDIDATE_CHECKS = 50_000;
 
     @Override
     public void onInitialize() {
+        Config.load();
         AsyncLocate.init();
         DevBridge.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher));
@@ -110,7 +113,7 @@ public class LocateMore implements ModInitializer {
             return;
         }
         structureArg.addChild(
-                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, 100))
+                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount))
                         .executes(LocateMore::locateAsync)
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("sync")
                                 .executes(ctx -> locateMany(ctx, false)))
@@ -349,7 +352,7 @@ public class LocateMore implements ModInitializer {
             this.holders = holders;
             this.originRx = Math.floorDiv(originChunk.x(), placement.spacing());
             this.originRz = Math.floorDiv(originChunk.z(), placement.spacing());
-            this.maxRing = Math.min((int) (MAX_DIST_BLOCKS / ((long) placement.spacing() * 16)) + 2, 4096);
+            this.maxRing = Math.min((int) (maxDistBlocks() / ((long) placement.spacing() * 16)) + 2, 4096);
         }
 
         /**
@@ -401,7 +404,7 @@ public class LocateMore implements ModInitializer {
             }
         }
 
-        long maxDistSqr = MAX_DIST_BLOCKS * MAX_DIST_BLOCKS;
+        long maxDistSqr = maxDistBlocks() * maxDistBlocks();
         PriorityQueue<Candidate> queue = new PriorityQueue<>(Comparator.comparingLong(Candidate::distSqr));
         List<SpreadSource> sources = new ArrayList<>();
         for (Map.Entry<StructurePlacement, Set<Holder<Structure>>> entry : byPlacement.entrySet()) {

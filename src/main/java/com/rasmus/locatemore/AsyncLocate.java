@@ -78,9 +78,11 @@ public final class AsyncLocate {
     private static final Logger LOGGER = LoggerFactory.getLogger("locatemore-async");
 
     /** Kill switch only; the deterministic bounds are distance + candidate caps. */
-    private static final long WALL_CLOCK_LIMIT_MS = 60_000;
+    private static long wallClockLimitMs() {
+        return Config.wallClockSeconds * 1000L;
+    }
     private static final long SCAN_TIMEOUT_MS = 5_000;
-    private static final int MAX_ACTIVE_SEARCHES = 2;
+
     private static final int MAX_CHUNK_LOADS_IN_FLIGHT = 4;
     /** Bound on speculative pending loads per search (also bounds save growth). */
     private static final int MAX_PENDING_LOADS = 8;
@@ -193,7 +195,7 @@ public final class AsyncLocate {
             }
         }
         List<LocateMore.Candidate> concentric = new ArrayList<>();
-        long maxDistSqr = LocateMore.MAX_DIST_BLOCKS * LocateMore.MAX_DIST_BLOCKS;
+        long maxDistSqr = LocateMore.maxDistBlocks() * LocateMore.maxDistBlocks();
         for (Map.Entry<StructurePlacement, Set<Holder<Structure>>> entry : byPlacement.entrySet()) {
             if (entry.getKey() instanceof ConcentricRingsStructurePlacement rings) {
                 List<ChunkPos> positions = state.getRingPositionsFor(rings);
@@ -221,7 +223,7 @@ public final class AsyncLocate {
                 server.getFixerUpper(), state.getLevelSeed(), index);
 
         Task previous = ACTIVE.get(key);
-        if (previous == null && ACTIVE.size() >= MAX_ACTIVE_SEARCHES) {
+        if (previous == null && ACTIVE.size() >= Config.maxActiveSearches) {
             source.sendFailure(Component.literal("Two searches are already running; try again shortly."));
             return 0;
         }
@@ -268,7 +270,7 @@ public final class AsyncLocate {
             java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
             // Sized to the active-search cap so a second search runs instead of
             // queuing behind the first with a frozen progress bar.
-            worker = Executors.newFixedThreadPool(MAX_ACTIVE_SEARCHES, r -> {
+            worker = Executors.newFixedThreadPool(Config.maxActiveSearches, r -> {
                 Thread thread = new Thread(r, "LocateMore-Worker-" + n.incrementAndGet());
                 thread.setDaemon(true);
                 return thread;
@@ -314,6 +316,10 @@ public final class AsyncLocate {
                 return;
             }
             if (pending.task.aborted.get() || pending.task.completed) {
+                pending.result.complete(null);
+                continue;
+            }
+            if (!Config.allowProbeChunkGeneration) {
                 pending.result.complete(null);
                 continue;
             }
@@ -464,7 +470,7 @@ public final class AsyncLocate {
         }
 
         private List<LocateMore.Hit> search(long startNanos) throws InterruptedException {
-            long maxDistSqr = LocateMore.MAX_DIST_BLOCKS * LocateMore.MAX_DIST_BLOCKS;
+            long maxDistSqr = LocateMore.maxDistBlocks() * LocateMore.maxDistBlocks();
             ChunkPos originChunk = new ChunkPos(origin.getX() >> 4, origin.getZ() >> 4);
             PriorityQueue<LocateMore.Candidate> queue =
                     new PriorityQueue<>(Comparator.comparingLong(LocateMore.Candidate::distSqr));
@@ -640,7 +646,7 @@ public final class AsyncLocate {
 
         private boolean overBudget(long startNanos, int checked) {
             return checked >= LocateMore.MAX_CANDIDATE_CHECKS
-                    || (System.nanoTime() - startNanos) / 1_000_000L > WALL_CLOCK_LIMIT_MS;
+                    || (System.nanoTime() - startNanos) / 1_000_000L > wallClockLimitMs();
         }
 
         private record Shadow(LocateMore.VerifyResult result, boolean needsLoad) {
@@ -659,7 +665,7 @@ public final class AsyncLocate {
         private CompletableFuture<ShadowDone> dispatchShadow(LocateMore.Candidate candidate) {
             LocateMore.Stats scratch = new LocateMore.Stats();
             ChunkPos pos = candidate.pos();
-            if (index.isKnownAbsentFromDisk(pos.pack())) {
+            if (Config.persistentIndex && index.isKnownAbsentFromDisk(pos.pack())) {
                 // Authoritative negative: skip the disk scan, straight to math.
                 scratch.indexHits++;
                 return CompletableFuture.supplyAsync(
@@ -683,7 +689,7 @@ public final class AsyncLocate {
                             onDisk = SCAN_FAILED;
                         } else {
                             onDisk = parseStarts(pos, collector);
-                            if (onDisk == null) {
+                            if (onDisk == null && Config.persistentIndex) {
                                 INDEX_MUTATIONS.add(new IndexMutation(index, pos.pack(), true));
                             }
                         }
@@ -834,7 +840,7 @@ public final class AsyncLocate {
                 }
                 if (hits.isEmpty()) {
                     source.sendFailure(Component.literal("No " + printable + " found within "
-                            + LocateMore.MAX_DIST_BLOCKS + " blocks."));
+                            + LocateMore.maxDistBlocks() + " blocks."));
                     return;
                 }
                 String note = hits.size() < count ? " - only " + hits.size() + " of " + count + " within range/budget" : "";
