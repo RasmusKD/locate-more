@@ -427,6 +427,7 @@ public class LocateMore implements ModInitializer {
             absent += other.absent;
             loads += other.loads;
             loadHits += other.loadHits;
+            regionSkips += other.regionSkips;
             indexHits += other.indexHits;
             memoHits += other.memoHits;
         }
