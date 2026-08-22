@@ -97,7 +97,6 @@ public class LocateMore implements ModInitializer {
     public void onInitialize() {
         Config.load();
         AsyncLocate.init();
-        DevBridge.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher));
     }
 
