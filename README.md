@@ -60,6 +60,13 @@ async search never blocks a tick.
 
 ## Limitations
 
+- **Plain `/locate` results deliberately differ from vanilla.** Vanilla can
+  return a structure that is not the nearest (MC-138887); with
+  `improveVanillaLocate` on (the default) this mod returns the true nearest,
+  for the command, for eyes of ender, and for other mods. If you need exact
+  vanilla parity, for speedrun practice or seed tooling, set the key to
+  false and every result matches vanilla again.
+
 - A structure in ungenerated terrain requires generating its candidate chunk
   to the first stage. Vanilla locate does the same. Each probe adds 4 to 12 KB
   to the world save, and the summary line reports the count.
