@@ -148,6 +148,10 @@ public final class AsyncLocate {
                 task.abort();
             }
             ACTIVE.clear();
+            // Biome tags rebind on datapack reload and structure.biomes() is
+            // tag-backed, so memoized math verdicts can go stale.
+            MATH_MEMO.clear();
+            MATH_MEMO_SIZE.set(0);
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (Task task : ACTIVE.values()) {
@@ -219,7 +223,9 @@ public final class AsyncLocate {
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
                 level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
-                level.getStructureManager(), level, level.getChunkSource().chunkScanner(),
+                level.getStructureManager(),
+                LevelHeightAccessor.create(level.getMinY(), level.getHeight()),
+                level.getChunkSource().chunkScanner(),
                 server.getFixerUpper(), state.getLevelSeed(), index);
 
         Task previous = ACTIVE.get(key);
@@ -250,6 +256,16 @@ public final class AsyncLocate {
      */
     private static int configFingerprint(ServerLevel level) {
         int hash = net.minecraft.SharedConstants.getCurrentVersion().dataVersion().version();
+        // The math path reads biomes and noise settings, so those registries
+        // must invalidate the index too (round-4 consensus finding).
+        for (var regKey : List.of(Registries.BIOME, Registries.NOISE_SETTINGS)) {
+            List<String> ids = new ArrayList<>();
+            for (var e : level.registryAccess().lookupOrThrow(regKey).entrySet()) {
+                ids.add(e.getKey().identifier().toString());
+            }
+            java.util.Collections.sort(ids);
+            hash = 31 * hash + ids.hashCode();
+        }
         var registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE_SET);
         List<String> parts = new ArrayList<>();
         for (var entry : registry.entrySet()) {
@@ -323,6 +339,7 @@ public final class AsyncLocate {
                 continue;
             }
             if (!Config.allowProbeChunkGeneration) {
+                pending.task.unresolved++;
                 pending.result.complete(null);
                 continue;
             }
@@ -333,9 +350,19 @@ public final class AsyncLocate {
             }
             ChunkPos pos = pending.candidate.pos();
             loadsInFlight++;
-            level.getChunkSource().getChunkFuture(pos.x(), pos.z(), ChunkStatus.STRUCTURE_STARTS, true)
+            // Acquired OFF the tick thread: on the main thread, vanilla's
+            // getChunkFuture managed-blocks until generation completes, which
+            // would invert the never-stalls-the-tick property (round-4 F1).
+            final PendingLoad issued = pending;
+            CompletableFuture
+                    .supplyAsync(() -> level.getChunkSource().getChunkFuture(
+                            pos.x(), pos.z(), ChunkStatus.STRUCTURE_STARTS, true), mathPool())
+                    .thenCompose(f -> f)
                     .whenCompleteAsync((chunkResult, throwable) -> {
                         loadsInFlight--;
+                        // Refill the freed slot immediately instead of waiting
+                        // for the next tick boundary (round-4 LM-14).
+                        pumpLoads(server);
                         if (pending.task.aborted.get() || pending.task.completed) {
                             pending.result.complete(null);
                             return;
@@ -349,6 +376,7 @@ public final class AsyncLocate {
                             } else {
                                 LOGGER.warn("Chunk resolution failed twice at {}; a candidate was dropped",
                                         pending.candidate.pos());
+                                pending.task.unresolved++;
                                 pending.result.complete(null);
                             }
                             return;
@@ -362,9 +390,18 @@ public final class AsyncLocate {
                         // Chunk is resident and vanilla's cache warm via
                         // onStructureLoad, so the vanilla-exact check is cheap.
                         // Scratch stats: the worker already counted this load.
-                        pending.result.complete(LocateMore.verify(pending.candidate.holders(), level,
-                                level.structureManager(), pending.candidate.placement(),
-                                pending.candidate.pos(), new LocateMore.Stats()));
+                        // An exception must never leave the future incomplete,
+                        // or it would pin the ordering barrier forever.
+                        try {
+                            pending.result.complete(LocateMore.verify(pending.candidate.holders(), level,
+                                    level.structureManager(), pending.candidate.placement(),
+                                    pending.candidate.pos(), new LocateMore.Stats()));
+                        } catch (Throwable t) {
+                            LOGGER.error("Chunk verification failed at {}", pos, t);
+                            pending.task.unresolved++;
+                        } finally {
+                            pending.result.complete(null);
+                        }
                     }, server);
         }
     }
@@ -399,6 +436,8 @@ public final class AsyncLocate {
         final StructureIndex index;
 
         final AtomicBoolean aborted = new AtomicBoolean();
+        /** Candidates lost to resolution failure or the probe-generation switch. */
+        volatile int unresolved;
         /** Set when the search ends normally, so leftover pending loads are dropped. */
         volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
@@ -506,7 +545,17 @@ public final class AsyncLocate {
                     if (!shadow.future().isDone()) {
                         continue;
                     }
-                    ShadowDone done = shadow.future().getNow(null);
+                    ShadowDone done;
+                    try {
+                        done = shadow.future().getNow(null);
+                    } catch (RuntimeException e) {
+                        // Exceptionally completed (modded placement or structure
+                        // threw): drop the candidate, keep the search alive.
+                        LOGGER.warn("Shadow verification failed at {}", shadow.candidate().pos(), e);
+                        unresolved++;
+                        iterator.remove();
+                        continue;
+                    }
                     if (done != null && done.shadow().needsLoad() && pending.size() >= MAX_PENDING_LOADS) {
                         continue; // defer: keeps the pending bound hard
                     }
@@ -851,9 +900,12 @@ public final class AsyncLocate {
                             + LocateMore.maxDistBlocks() + " blocks."));
                     return;
                 }
-                String note = hits.size() < count ? " - only " + hits.size() + " of " + count + " within range/budget" : "";
+                String baseNote = hits.size() < count ? " - only " + hits.size() + " of " + count + " within range/budget" : "";
+                final String note = unresolved > 0
+                        ? baseNote + " - " + unresolved + " candidates unresolved; ordering not guaranteed"
+                        : baseNote;
                 String probeNote = chunksGenerated > 0
-                        ? " - generated " + chunksGenerated + " probe chunks (~" + (chunksGenerated * 12) + " KB)" : "";
+                        ? " - generated " + chunksGenerated + " probe chunks" : "";
                 source.sendSuccess(() -> Component.literal(
                         hits.size() + " nearest " + printable + " (" + tookMs + " ms async"
                                 + " [present=" + stats.present + " absent=" + stats.absent

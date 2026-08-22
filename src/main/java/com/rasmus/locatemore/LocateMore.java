@@ -58,9 +58,10 @@ import org.slf4j.LoggerFactory;
  * Default mode enumerates the seed's placement candidates in exact distance
  * order (priority queue keyed on each candidate's reported locate position)
  * and verifies each with the same public checks vanilla's own locate uses,
- * so cost scales with hits rather than area and duplicates cannot occur:
- * each region has exactly one candidate chunk and each (structure, chunk)
- * is examined once. Appending "vanilla" runs the naive lab mode instead
+ * so cost scales with hits rather than area. Each region has exactly one
+ * candidate chunk; the residual duplicate routes (one structure in several
+ * structure sets, legacy re-queues) are collapsed by a dedup set keyed on
+ * start identity. Appending "vanilla" runs the naive lab mode instead
  * (a grid of unmodified vanilla nearest-searches, deduped) so the two can
  * be timed against each other.
  */
@@ -116,8 +117,12 @@ public class LocateMore implements ModInitializer {
                 RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount))
                         .executes(LocateMore::locateAsync)
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("sync")
+                                .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_ADMINS))
+                                .requires(src -> Config.enableBenchmarkModes)
                                 .executes(ctx -> locateMany(ctx, false)))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("vanilla")
+                                .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_ADMINS))
+                                .requires(src -> Config.enableBenchmarkModes)
                                 .executes(ctx -> locateMany(ctx, true)))
                         .build());
     }
@@ -314,6 +319,9 @@ public class LocateMore implements ModInitializer {
                 return new VerifyResult(placement.getLocatePos(chunkTarget), structure, chunkTarget);
             }
             stats.loads++;
+            if (!Config.allowProbeChunkGeneration) {
+                continue; // admin forbade probe generation; skip like the async path
+            }
             ChunkAccess chunk = level.getChunk(chunkTarget.x(), chunkTarget.z(), ChunkStatus.STRUCTURE_STARTS);
             StructureStart start = structureManager.getStartForStructure(
                     SectionPos.bottomOf(chunk), structure.value(), chunk);
@@ -382,7 +390,9 @@ public class LocateMore implements ModInitializer {
                             (originRx + dx) * placement.spacing(),
                             (originRz + dz) * placement.spacing());
                     long distSqr = horizDistSqr(placement.getLocatePos(pos), origin);
-                    queue.add(new Candidate(pos, placement, holders, distSqr, null));
+                    if (distSqr <= maxDistBlocks() * maxDistBlocks()) {
+                        queue.add(new Candidate(pos, placement, holders, distSqr, null));
+                    }
                 }
             }
         }

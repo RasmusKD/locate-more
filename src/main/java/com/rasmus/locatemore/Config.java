@@ -36,6 +36,8 @@ public final class Config {
     public static volatile boolean allowProbeChunkGeneration = true;
     /** Persist the negative index across restarts. */
     public static volatile boolean persistentIndex = true;
+    /** Expose the synchronous benchmark modes (sync/vanilla) to admins. */
+    public static volatile boolean enableBenchmarkModes = false;
 
     private Config() {
     }
@@ -48,10 +50,13 @@ public final class Config {
                 JsonObject json = gson.fromJson(Files.readString(path, StandardCharsets.UTF_8), JsonObject.class);
                 if (json != null) {
                     if (json.has("wallClockSeconds")) {
-                        wallClockSeconds = Math.max(5, json.get("wallClockSeconds").getAsInt());
+                        wallClockSeconds = Math.min(3_600, Math.max(5, json.get("wallClockSeconds").getAsInt()));
                     }
                     if (json.has("maxDistanceBlocks")) {
-                        maxDistanceBlocks = Math.max(1_000, json.get("maxDistanceBlocks").getAsLong());
+                        // Upper clamp at the world border: beyond it the squared
+                        // distance overflows and every search silently fails.
+                        maxDistanceBlocks = Math.min(30_000_000L,
+                                Math.max(1_000, json.get("maxDistanceBlocks").getAsLong()));
                     }
                     if (json.has("maxCount")) {
                         maxCount = Math.max(1, Math.min(1_000, json.get("maxCount").getAsInt()));
@@ -65,6 +70,9 @@ public final class Config {
                     if (json.has("persistentIndex")) {
                         persistentIndex = json.get("persistentIndex").getAsBoolean();
                     }
+                    if (json.has("enableBenchmarkModes")) {
+                        enableBenchmarkModes = json.get("enableBenchmarkModes").getAsBoolean();
+                    }
                 }
             } catch (Exception e) {
                 LOGGER.warn("Could not parse {}; using defaults", path, e);
@@ -77,6 +85,7 @@ public final class Config {
         out.addProperty("maxActiveSearches", maxActiveSearches);
         out.addProperty("allowProbeChunkGeneration", allowProbeChunkGeneration);
         out.addProperty("persistentIndex", persistentIndex);
+        out.addProperty("enableBenchmarkModes", enableBenchmarkModes);
         try {
             Files.createDirectories(path.getParent());
             Files.writeString(path, gson.toJson(out), StandardCharsets.UTF_8);

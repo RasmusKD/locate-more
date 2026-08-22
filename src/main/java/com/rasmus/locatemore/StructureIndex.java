@@ -12,11 +12,15 @@ import net.minecraft.world.level.saveddata.SavedDataType;
 
 /**
  * Per-dimension persistent memory of candidate chunks known to be absent from
- * disk. Strictly negative: an entry only ever removes a disk scan; a stale
- * entry costs one redundant chunk resolution, never a wrong answer. Positive
+ * disk. Strictly negative: an entry only ever removes a disk scan, and while
+ * the generation config is unchanged a stale entry costs one redundant chunk
+ * resolution rather than a wrong answer (the fingerprint invalidates the index
+ * when structure sets, biomes, noise settings or the data version change; a
+ * config change the fingerprint cannot see requires /locatemore index clear,
+ * as the README documents). Positive
  * verdicts always re-scan. Keys are packed ChunkPos longs of placement
- * candidate chunks (one per region, so density stays tiny), delta-encoded on
- * save which gzips to well under 100 KB for a heavily searched world.
+ * candidate chunks (one per region, so density stays low), delta-encoded on
+ * save and capped at two million entries.
  *
  * Thread model: reads from the search worker, mutations applied on the server
  * thread only (AsyncLocate drains a queue per tick); both synchronize here.
@@ -61,8 +65,11 @@ public final class StructureIndex extends SavedData {
         return index;
     }
 
-    private synchronized LongStream encodeAbsent() {
-        long[] keys = absentChunks.toLongArray();
+    private LongStream encodeAbsent() {
+        long[] keys;
+        synchronized (this) {
+            keys = absentChunks.toLongArray();
+        }
         java.util.Arrays.sort(keys);
         LongArrayList deltas = new LongArrayList(keys.length);
         long previous = 0;
@@ -104,9 +111,17 @@ public final class StructureIndex extends SavedData {
         return absentChunks.contains(chunkPack);
     }
 
+    private static final int MAX_ENTRIES = 2_000_000;
+
     /** Server thread only (drained from the mutation queue). */
     public synchronized boolean apply(long chunkPack, boolean absent) {
-        return absent ? absentChunks.add(chunkPack) : absentChunks.remove(chunkPack);
+        if (absent) {
+            if (absentChunks.size() >= MAX_ENTRIES) {
+                absentChunks.clear(); // pure cost optimization; safe to drop
+            }
+            return absentChunks.add(chunkPack);
+        }
+        return absentChunks.remove(chunkPack);
     }
 
     public synchronized int size() {
