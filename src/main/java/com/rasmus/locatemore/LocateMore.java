@@ -174,8 +174,9 @@ public class LocateMore implements ModInitializer {
                                     .computeIfAbsent(StructureIndex.TYPE);
                             int size = index.size();
                             index.clear();
+                            AsyncLocate.clearMathMemo();
                             ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "Cleared LocateMore index (" + size + " entries)."), false);
+                                    "Cleared LocateMore index (" + size + " entries) and the math memo."), false);
                             return 1;
                         }))));
     }
@@ -554,7 +555,7 @@ public class LocateMore implements ModInitializer {
                         expanded = true;
                     }
                 }
-                if (overBudget(startNanos, checkedOut[0])) {
+                if (syncOverBudget(startNanos, checkedOut[0])) {
                     gaveUp[0] = true;
                     break search;
                 }
@@ -587,7 +588,7 @@ public class LocateMore implements ModInitializer {
                             horizDistSqr(found.pos(), origin)));
                 }
             }
-            if (overBudget(startNanos, checkedOut[0])) {
+            if (syncOverBudget(startNanos, checkedOut[0])) {
                 gaveUp[0] = true;
                 break;
             }
@@ -595,7 +596,7 @@ public class LocateMore implements ModInitializer {
         return hits;
     }
 
-    private static boolean overBudget(long startNanos, int checked) {
+    private static boolean syncOverBudget(long startNanos, int checked) {
         return checked >= MAX_CANDIDATE_CHECKS
                 || (System.nanoTime() - startNanos) / 1_000_000L > SMART_TIME_BUDGET_MS;
     }

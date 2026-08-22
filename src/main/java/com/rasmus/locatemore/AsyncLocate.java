@@ -291,6 +291,12 @@ public final class AsyncLocate {
         return 31 * hash + parts.hashCode();
     }
 
+    /** Admin-facing invalidation for the cache no fingerprint can see into. */
+    static void clearMathMemo() {
+        MATH_MEMO.clear();
+        MATH_MEMO_SIZE.set(0);
+    }
+
     private static synchronized ExecutorService workerExecutor() {
         if (worker == null || worker.isShutdown()) {
             java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
