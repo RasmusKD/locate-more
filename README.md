@@ -40,18 +40,22 @@ Three mechanisms carry the speed:
 
 ## Measured
 
-Seed 20260821, fixed position, 20 of each structure. Reproducible.
+Release build, virgin world, seed 20260821, fixed position, 20 of each
+structure. Reproducible.
 
 | structure | first ever (cold) | after restart (index only) | warm |
 |---|---|---|---|
-| jungle_pyramid | 6.2 s | 1.0 s | 0.17 s |
-| desert_pyramid | 10.6 s | 2.0 s | n/a |
-| shipwreck | 0.2 s | | |
-| fortress (Nether) | 0.33 s | | |
-| mansion (earlier world) | 4.7 s | | 0.02 s |
+| jungle_pyramid | 6.5 s | 0.92 s | 0.18 s |
+| desert_pyramid | 11.7 s | 1.9 s | n/a |
+| #village (tag) | 5.2 s | | |
+| shipwreck | 0.34 s | | |
+| fortress (Nether) | 0.39 s | | |
+| stronghold | 0.35 s | | |
 
+The restart column is the persistent index alone: the session memo is empty
+after a restart, and the counters in the summary line prove it (memoHits=0).
 Control, same world and warm cache: repeated vanilla nearest-searches took 10
-seconds and found 16 of 20. The lab mode `vanilla` reproduces that method. The
+seconds and found 13 of 20. The lab mode `vanilla` reproduces that method. The
 async search never blocks a tick.
 
 ## Limitations
