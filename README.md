@@ -58,6 +58,25 @@ Control, same world and warm cache: repeated vanilla nearest-searches took 10
 seconds and found 13 of 20. The lab mode `vanilla` reproduces that method. The
 async search never blocks a tick.
 
+## API for other mods
+
+Plain `findNearestMapStructure` calls are already accelerated by the mixin.
+The API adds multi-result and an async handoff:
+
+```java
+LocateMoreApi.findNearest(level, structures, origin, 5).thenAccept(result -> {
+    for (LocateMoreApi.StructureHit hit : result.hits()) {
+        // hit.pos(), hit.structure(), hit.distance()
+    }
+});
+```
+
+Call on the server thread; the future completes on the server thread with
+hits in exact distance order. Server budgets from `locatemore.json` apply.
+When `result.orderingGuaranteed()` is false, a nearer structure may exist in
+a chunk the search was not allowed to resolve. `/locatemore apitest
+<structure> <count>` runs the same call from in game.
+
 ## Limitations
 
 - **Plain `/locate` results deliberately differ from vanilla.** Vanilla can

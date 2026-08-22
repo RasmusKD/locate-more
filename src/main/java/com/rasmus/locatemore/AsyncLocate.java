@@ -24,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.ChatFormatting;
+import net.minecraft.commands.CommandSource;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -58,6 +59,7 @@ import net.minecraft.world.level.chunk.storage.ChunkScanAccess;
 import net.minecraft.world.level.chunk.storage.SimpleRegionStorage;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.structure.Structure;
+import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.level.levelgen.structure.placement.ConcentricRingsStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.RandomSpreadStructurePlacement;
 import net.minecraft.world.level.levelgen.structure.placement.StructurePlacement;
@@ -194,6 +196,55 @@ public final class AsyncLocate {
 
     public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders, int count,
             LocateMore.DedupKey excluded) {
+        Object key = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console";
+        Task task = buildTask(source, key, printable, holders, count, excluded);
+
+        Task previous = ACTIVE.get(key);
+        if (previous == null && ACTIVE.size() >= Config.maxActiveSearches) {
+            source.sendFailure(Component.literal(Config.maxActiveSearches + " searches are already running; try again shortly."));
+            return 0;
+        }
+        ACTIVE.put(key, task);
+        if (previous != null) {
+            previous.abort();
+            source.sendSuccess(() -> Component.literal("Previous search superseded.").withStyle(ChatFormatting.GRAY), false);
+        }
+        source.sendSuccess(() -> Component.literal(
+                "Searching for the " + count + " nearest " + printable + "…").withStyle(ChatFormatting.GRAY), false);
+        if (source.getEntity() instanceof ServerPlayer player) {
+            task.attachBossBar(player);
+        }
+        workerExecutor().execute(task::run);
+        return 1;
+    }
+
+    /**
+     * API entry: the same engine and budgets behind a silent source. Each
+     * call gets its own key, so API searches count against the cap but never
+     * supersede a player's search or each other.
+     */
+    static CompletableFuture<LocateMoreApi.SearchResult> startForApi(ServerLevel level,
+            HolderSet<Structure> holders, BlockPos origin, int count) {
+        CompletableFuture<LocateMoreApi.SearchResult> sink = new CompletableFuture<>();
+        if (ACTIVE.size() >= Config.maxActiveSearches) {
+            sink.completeExceptionally(new IllegalStateException(
+                    Config.maxActiveSearches + " searches are already running"));
+            return sink;
+        }
+        CommandSourceStack source = level.getServer().createCommandSourceStack()
+                .withSource(CommandSource.NULL)
+                .withLevel(level)
+                .withPosition(Vec3.atBottomCenterOf(origin));
+        Object key = new Object();
+        Task task = buildTask(source, key, "structures (api)", holders, count, null);
+        task.apiSink = sink;
+        ACTIVE.put(key, task);
+        workerExecutor().execute(task::run);
+        return sink;
+    }
+
+    private static Task buildTask(CommandSourceStack source, Object key, String printable,
+            HolderSet<Structure> holders, int count, LocateMore.DedupKey excluded) {
         MinecraftServer server = source.getServer();
         ServerLevel level = source.getLevel();
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
@@ -227,8 +278,7 @@ public final class AsyncLocate {
         StructureIndex index = level.getDataStorage().computeIfAbsent(StructureIndex.TYPE);
         index.validate(state.getLevelSeed(), configFingerprint(level));
 
-        Object key = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console";
-        Task task = new Task(server, level.dimension(), source, key, printable, holders, count, origin,
+        return new Task(server, level.dimension(), source, key, printable, holders, count, origin,
                 excluded,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
@@ -237,24 +287,6 @@ public final class AsyncLocate {
                 LevelHeightAccessor.create(level.getMinY(), level.getHeight()),
                 level.getChunkSource().chunkScanner(),
                 server.getFixerUpper(), state.getLevelSeed(), index);
-
-        Task previous = ACTIVE.get(key);
-        if (previous == null && ACTIVE.size() >= Config.maxActiveSearches) {
-            source.sendFailure(Component.literal(Config.maxActiveSearches + " searches are already running; try again shortly."));
-            return 0;
-        }
-        ACTIVE.put(key, task);
-        if (previous != null) {
-            previous.abort();
-            source.sendSuccess(() -> Component.literal("Previous search superseded.").withStyle(ChatFormatting.GRAY), false);
-        }
-        source.sendSuccess(() -> Component.literal(
-                "Searching for the " + count + " nearest " + printable + "…").withStyle(ChatFormatting.GRAY), false);
-        if (source.getEntity() instanceof ServerPlayer player) {
-            task.attachBossBar(player);
-        }
-        workerExecutor().execute(task::run);
-        return 1;
     }
 
     /**
@@ -460,6 +492,8 @@ public final class AsyncLocate {
         volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
         int chunksGenerated;
+        /** When set, results complete this future instead of going to chat. */
+        volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
         private volatile ServerBossEvent bossBar;
         private long lastProgressPush;
 
@@ -503,6 +537,10 @@ public final class AsyncLocate {
 
         void abort() {
             if (aborted.compareAndSet(false, true)) {
+                if (apiSink != null) {
+                    apiSink.completeExceptionally(
+                            new java.util.concurrent.CancellationException("Search aborted"));
+                }
                 server.execute(this::removeBossBar);
             }
         }
@@ -842,6 +880,9 @@ public final class AsyncLocate {
         // ------------------------------------------------------------------
 
         private void streamHit(int number, LocateMore.Hit hit) {
+            if (apiSink != null) {
+                return;
+            }
             server.execute(() -> {
                 if (aborted.get() || !stillDeliverable()) {
                     return;
@@ -871,6 +912,19 @@ public final class AsyncLocate {
             long tookMs = (System.nanoTime() - startNanos) / 1_000_000L;
             server.execute(() -> {
                 removeBossBar();
+                if (apiSink != null) {
+                    if (error != null) {
+                        apiSink.completeExceptionally(error);
+                        return;
+                    }
+                    List<LocateMoreApi.StructureHit> out = new ArrayList<>(hits.size());
+                    for (LocateMore.Hit hit : hits) {
+                        out.add(new LocateMoreApi.StructureHit(hit.pos(), hit.holder(),
+                                Math.sqrt((double) hit.horizDistSqr())));
+                    }
+                    apiSink.complete(new LocateMoreApi.SearchResult(List.copyOf(out), unresolved == 0, tookMs));
+                    return;
+                }
                 if (!stillDeliverable()) {
                     return;
                 }

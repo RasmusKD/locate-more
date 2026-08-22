@@ -164,6 +164,12 @@ public class LocateMore implements ModInitializer {
                                     "Cleared vanilla StructureCheck caches (" + chunks + " chunk entries)."), false);
                             return 1;
                         })))
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("apitest")
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                        "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                "count", IntegerArgumentType.integer(1, 100))
+                                        .executes(LocateMore::apiSmokeTest))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
                         .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
                                         "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
@@ -179,6 +185,38 @@ public class LocateMore implements ModInitializer {
                                     "Cleared LocateMore index (" + size + " entries) and the math memo."), false);
                             return 1;
                         }))));
+    }
+
+    /** Exercises the public API surface end to end from in game. */
+    private static int apiSmokeTest(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
+        ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
+                ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
+        CommandSourceStack source = ctx.getSource();
+        Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        String printable = result.unwrap().map(
+                key -> key.identifier().toString(),
+                tag -> "#" + tag.location());
+        HolderSet<Structure> holders = result.unwrap().map(
+                key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
+                registry::get
+        ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
+        int count = IntegerArgumentType.getInteger(ctx, "count");
+        LocateMoreApi.findNearest(source.getLevel(), holders, BlockPos.containing(source.getPosition()), count)
+                .whenComplete((search, failure) -> {
+                    if (failure != null) {
+                        source.sendFailure(Component.literal("API failed: " + failure));
+                        return;
+                    }
+                    StringBuilder line = new StringBuilder("API: " + search.hits().size() + " hits in "
+                            + search.tookMillis() + " ms, ordering "
+                            + (search.orderingGuaranteed() ? "guaranteed" : "NOT guaranteed"));
+                    for (LocateMoreApi.StructureHit hit : search.hits()) {
+                        line.append(" [").append(hit.pos().getX()).append(',').append(hit.pos().getZ())
+                                .append(" d=").append((int) hit.distance()).append(']');
+                    }
+                    source.sendSuccess(() -> Component.literal(line.toString()), false);
+                });
+        return 1;
     }
 
     /**
