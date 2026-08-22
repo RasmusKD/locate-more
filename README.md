@@ -9,7 +9,9 @@ order. The server keeps ticking.
 
 Vanilla `/locate` blocks the server thread and returns one result. That result
 is [not always the nearest](https://bugs.mojang.com/browse/MC-138887).
-LocateMore adds an optional count from 1 to 100 to the vanilla command. The
+LocateMore adds an optional count from 1 to 100 to the vanilla command, and
+routes vanilla's own nearest-structure search through the same engine, so
+plain `/locate`, eyes of ender, and other mods get the true nearest too. The
 search runs off the server thread. Results stream into chat as they are
 confirmed, nearest first. Every line teleports on click. A boss bar shows
 progress.
@@ -106,11 +108,14 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 | command | what |
 |---|---|
 | `/locate structure <id\|#tag> <count>` | async search, streams the N nearest |
-| `/locate structure <id> <count> sync` | same algorithm, synchronous, for measurements |
-| `/locate structure <id> <count> vanilla` | vanilla-method lab, for measurements |
+| `/locate structure <id> <count> next` | same, skipping the structure you stand in |
+| `/locate structure <id> <count> sync` | same algorithm, synchronous, for measurements (config-gated) |
+| `/locate structure <id> <count> vanilla` | vanilla-method lab, for measurements (config-gated) |
 | `/locatemore cache stats` | cache and index sizes |
 | `/locatemore cache clear` | clear vanilla's in-memory caches |
-| `/locatemore index clear` | wipe this dimension's index |
+| `/locatemore index clear` | wipe this dimension's index and the session memo |
+| `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
+| `/locatemore apitest <structure> <count>` | run the public API end to end |
 
 Operator permission required, same as vanilla `/locate`. Structure tags and
 all dimensions work. Vanilla clients on a dedicated server see correct output,
@@ -120,9 +125,9 @@ because every line uses vanilla translation keys.
 
 - `prewarm <radius>`: index every structure set in an area up front, so later
   locates, treasure maps, and eye-of-ender throws answer instantly
-- The same engine behind vanilla's own call sites: explorer maps, eyes of
-  ender, cartographer trades
-- `next` to skip the structure you stand in, and an API event for other mods
+- Explorer maps and cartographer trades (the skip-known path) through the
+  engine; they keep the vanilla path for now because that path mutates
+  structure references
 
 ## Versions
 
