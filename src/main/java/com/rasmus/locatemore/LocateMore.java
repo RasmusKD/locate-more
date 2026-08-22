@@ -544,7 +544,8 @@ public class LocateMore implements ModInitializer {
             HolderSet<Structure> holders, BlockPos origin, int ringRadius, boolean[] gaveUp) {
         long startNanos = System.nanoTime();
         int[] checked = new int[1];
-        List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(), ringRadius, gaveUp);
+        List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(),
+                ringRadius, gaveUp, true);
         if (hits.isEmpty()) {
             return null;
         }
@@ -555,16 +556,32 @@ public class LocateMore implements ModInitializer {
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats) {
         return smartLocate(level, holders, origin, count, startNanos, checkedOut, stats,
-                Integer.MAX_VALUE, new boolean[1]);
+                Integer.MAX_VALUE, new boolean[1], false);
     }
 
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats,
-            int ringCap, boolean[] gaveUp) {
+            int ringCap, boolean[] gaveUp, boolean trustMath) {
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
         StructureManager structureManager = level.structureManager();
         long seed = state.getLevelSeed();
         ChunkPos originChunk = new ChunkPos(origin.getX() >> 4, origin.getZ() >> 4);
+
+        // trustMath: the vanilla call sites (plain /locate, eyes of ender,
+        // other mods via the mixin) get the same single-set math trust as the
+        // async engine. The lab modes pass false and keep real generation as
+        // their referee.
+        Map<StructurePlacement, Integer> trustSetSize = null;
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet trustRegions = null;
+        if (trustMath) {
+            trustSetSize = new java.util.IdentityHashMap<>();
+            for (var setHolder : state.possibleStructureSets()) {
+                trustSetSize.put(setHolder.value().placement(), setHolder.value().structures().size());
+            }
+            trustRegions = AsyncLocate.listRegions(
+                    ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
+                            .locatemore$storageSource().getDimensionPath(level.dimension()).resolve("region"));
+        }
 
         // LinkedHash* everywhere: vanilla verifies structures in insertion
         // order and reports the first present one, so order must be stable.
@@ -641,8 +658,29 @@ public class LocateMore implements ModInitializer {
                     continue;
                 }
                 checkedOut[0]++;
-                found = verify(candidate.holders(), level, structureManager,
-                        candidate.placement(), candidate.pos(), stats);
+                if (trustRegions != null
+                        && trustSetSize.getOrDefault(candidate.placement(), 2) == 1
+                        && !trustRegions.contains(ChunkPos.pack(
+                                candidate.pos().x() >> 5, candidate.pos().z() >> 5))) {
+                    // Region-absent single-set candidate: generation would run
+                    // exactly this math, so the verdict is the answer. This
+                    // also keeps vanilla's StructureCheck scan away from
+                    // ungenerated regions, where it would create empty files.
+                    found = null;
+                    for (Holder<Structure> holder : candidate.holders()) {
+                        if (AsyncLocate.mathCanStart(level, holder.value(), candidate.pos())) {
+                            stats.present++;
+                            stats.mathSkips++;
+                            found = new VerifyResult(candidate.placement().getLocatePos(candidate.pos()),
+                                    holder, candidate.pos());
+                            break;
+                        }
+                        stats.absent++;
+                    }
+                } else {
+                    found = verify(candidate.holders(), level, structureManager,
+                            candidate.placement(), candidate.pos(), stats);
+                }
             }
             if (found != null) {
                 if (candidate.resolved() == null && !found.startChunk().equals(candidate.pos())) {

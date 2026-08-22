@@ -35,7 +35,9 @@ Four mechanisms carry the speed:
   answer. Multi-structure sets (villages, nether complexes) still resolve
   through real generation, because the weighted draw between set members is
   generation's call, and the summary line's `math=` counter referees every
-  such load.
+  such load. The same trust covers the vanilla call sites: plain `/locate`,
+  eyes of ender, and other mods calling vanilla's search. Only the lab modes
+  keep real generation as their referee.
 - **The filesystem as the negative source.** Each search lists the region
   directory once. A candidate whose region file is absent cannot be on disk
   and goes straight to the math, with no disk round trip.
@@ -47,10 +49,10 @@ Four mechanisms carry the speed:
 - **A session memo for the biome math.** The memo is not saved on purpose,
   because datapacks can change generation without changing the seed. It is
   the mod's only cache, and it lives only in memory: nothing is persisted,
-  so nothing can go stale across sessions. Earlier versions also kept a
-  persistent negative index; once the region catalog existed, an A/B
-  measurement showed the index saved zero measurable time, so it was
-  deleted (an orphaned `structure_index` file in old worlds is harmless).
+  so nothing can go stale across sessions. A persistent negative index was
+  measured against the region catalog and saved zero time, so the mod does
+  not keep one (an orphaned `structure_index` file in old worlds is
+  harmless).
 
 ## Measured
 
@@ -111,8 +113,8 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 - For multi-structure sets, a structure in ungenerated terrain requires
   generating its candidate chunk to the first stage. Vanilla locate does the
   same for every structure. Each probe adds 4 to 12 KB to the world save, and
-  the summary line reports the count. Single-set structures need no probes
-  since 1.3.
+  the summary line reports the count. Single-set structures never need
+  probes, on any path.
 - Nothing persists between sessions, so there is no state to go stale across
   restarts. Within a session, a datapack reload aborts running searches and
   clears the math memo automatically; `/locatemore memo clear` does the same
@@ -137,7 +139,7 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 | `/locatemore cache clear` | clear vanilla's in-memory caches |
 | `/locatemore memo clear` | wipe the session math memo |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
-| `/locatemore prune` | delete empty region files left by pre-1.2.1 scans |
+| `/locatemore prune` | delete empty region files (old mod versions and vanilla scans leave them) |
 | `/locatemore apitest <structure> <count>` | run the public API end to end |
 
 Operator permission required, same as vanilla `/locate`. Structure tags and

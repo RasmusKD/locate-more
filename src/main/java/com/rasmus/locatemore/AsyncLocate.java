@@ -295,7 +295,7 @@ public final class AsyncLocate {
      * write an empty region file for every unexplored candidate.
      * Returns null when the directory cannot be listed (scan everything).
      */
-    private static it.unimi.dsi.fastutil.longs.LongOpenHashSet listRegions(java.nio.file.Path regionDir) {
+    static it.unimi.dsi.fastutil.longs.LongOpenHashSet listRegions(java.nio.file.Path regionDir) {
         it.unimi.dsi.fastutil.longs.LongOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
         try (var stream = java.nio.file.Files.newDirectoryStream(regionDir, "r.*.mca")) {
             for (java.nio.file.Path file : stream) {
@@ -317,6 +317,34 @@ public final class AsyncLocate {
             return null;
         }
         return out;
+    }
+
+    /**
+     * Server-thread math verdict for the sync path, sharing the session memo
+     * with the async tasks. Mirrors Task.structureCanStart.
+     */
+    static boolean mathCanStart(ServerLevel level, Structure structure, ChunkPos pos) {
+        long pack = pos.pack();
+        MemoKey key = new MemoKey(level.dimension(), structure);
+        ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
+        Boolean cached = memo.get(pack);
+        if (cached != null) {
+            return cached;
+        }
+        HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
+        boolean possible = structure.findValidGenerationPoint(new Structure.GenerationContext(
+                level.registryAccess(), level.getChunkSource().getGenerator(),
+                level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
+                level.getStructureManager(),
+                level.getChunkSource().getGeneratorState().getLevelSeed(), pos,
+                LevelHeightAccessor.create(level.getMinY(), level.getHeight()), biomes::contains)).isPresent();
+        if (MATH_MEMO_SIZE.incrementAndGet() > MATH_MEMO_CAP) {
+            MATH_MEMO.clear();
+            MATH_MEMO_SIZE.set(0);
+            memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
+        }
+        memo.put(pack, possible);
+        return possible;
     }
 
     /** Admin-facing invalidation for the cache no fingerprint can see into. */
