@@ -323,6 +323,38 @@ public final class AsyncLocate {
         return 31 * hash + parts.hashCode();
     }
 
+    /**
+     * The region files that can actually hold chunks (bigger than the 8 KB
+     * header). Listed once per search: a candidate whose region is not here
+     * cannot be on disk, so the scan is skipped. That also sidesteps
+     * vanilla's scan path, whose RegionFile opens with CREATE and would
+     * write an empty region file for every unexplored candidate.
+     * Returns null when the directory cannot be listed (scan everything).
+     */
+    private static it.unimi.dsi.fastutil.longs.LongOpenHashSet listRegions(java.nio.file.Path regionDir) {
+        it.unimi.dsi.fastutil.longs.LongOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+        try (var stream = java.nio.file.Files.newDirectoryStream(regionDir, "r.*.mca")) {
+            for (java.nio.file.Path file : stream) {
+                String[] parts = file.getFileName().toString().split("\\.");
+                if (parts.length != 4) {
+                    continue;
+                }
+                try {
+                    if (java.nio.file.Files.size(file) > 8192) {
+                        out.add(ChunkPos.pack(Integer.parseInt(parts[1]), Integer.parseInt(parts[2])));
+                    }
+                } catch (NumberFormatException | java.io.IOException ignored) {
+                }
+            }
+        } catch (java.nio.file.NoSuchFileException e) {
+            return out; // fresh dimension: nothing on disk yet
+        } catch (java.io.IOException e) {
+            LOGGER.warn("Could not list {}; scanning without the region catalog", regionDir, e);
+            return null;
+        }
+        return out;
+    }
+
     /** Admin-facing invalidation for the cache no fingerprint can see into. */
     static void clearMathMemo() {
         MATH_MEMO.clear();
@@ -494,6 +526,8 @@ public final class AsyncLocate {
         int chunksGenerated;
         /** When set, results complete this future instead of going to chat. */
         volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
+        /** Regions with chunk data on disk; null means unknown, scan everything. */
+        private it.unimi.dsi.fastutil.longs.LongOpenHashSet regions;
         private volatile ServerBossEvent bossBar;
         private long lastProgressPush;
 
@@ -572,6 +606,8 @@ public final class AsyncLocate {
         }
 
         private List<LocateMore.Hit> search(long startNanos) throws InterruptedException {
+            regions = listRegions(((com.rasmus.locatemore.mixin.MinecraftServerAccessor) server)
+                    .locatemore$storageSource().getDimensionPath(dimension).resolve("region"));
             long maxDistSqr = LocateMore.maxDistBlocks() * LocateMore.maxDistBlocks();
             ChunkPos originChunk = new ChunkPos(origin.getX() >> 4, origin.getZ() >> 4);
             PriorityQueue<LocateMore.Candidate> queue =
@@ -789,6 +825,15 @@ public final class AsyncLocate {
                 return CompletableFuture.supplyAsync(
                         () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());
             }
+            if (regions != null && !regions.contains(ChunkPos.pack(pos.x() >> 5, pos.z() >> 5))) {
+                // No region file, so the chunk cannot be on disk: straight to
+                // math. A region saved after the listing costs one redundant
+                // load at worst, because math-present still resolves through
+                // the chunk system, which is ground truth.
+                scratch.regionSkips++;
+                return CompletableFuture.supplyAsync(
+                        () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());
+            }
             CollectFields collector = ShadowScan.newCollector();
             // The timeout also covers the IOWorker shutdown trap: futures are
             // never completed after close, but orTimeout fires regardless.
@@ -948,6 +993,7 @@ public final class AsyncLocate {
                         hits.size() + " nearest " + printable + " (" + tookMs + " ms async"
                                 + " [present=" + stats.present + " absent=" + stats.absent
                                 + " loads=" + stats.loads + " loadHits=" + stats.loadHits
+                                + " regionSkips=" + stats.regionSkips
                                 + " indexHits=" + stats.indexHits + " memoHits=" + stats.memoHits + "]"
                                 + note + probeNote + ")").withStyle(ChatFormatting.GRAY), false);
             });

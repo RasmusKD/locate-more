@@ -5,7 +5,8 @@
   "mixins": [
     "StructureCheckAccessor",
     "ServerLevelStructureAccessor",
-    "ChunkGeneratorMixin"
+    "ChunkGeneratorMixin",
+    "MinecraftServerAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

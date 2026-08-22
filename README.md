@@ -115,6 +115,7 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 | `/locatemore cache clear` | clear vanilla's in-memory caches |
 | `/locatemore index clear` | wipe this dimension's index and the session memo |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
+| `/locatemore prune` | delete empty region files left by pre-1.2.1 scans |
 | `/locatemore apitest <structure> <count>` | run the public API end to end |
 
 Operator permission required, same as vanilla `/locate`. Structure tags and

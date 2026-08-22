@@ -164,6 +164,32 @@ public class LocateMore implements ModInitializer {
                                     "Cleared vanilla StructureCheck caches (" + chunks + " chunk entries)."), false);
                             return 1;
                         })))
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("prune").executes(ctx -> {
+                    ServerLevel level = ctx.getSource().getLevel();
+                    java.nio.file.Path dir = ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
+                            .locatemore$storageSource().getDimensionPath(level.dimension()).resolve("region");
+                    int removed = 0;
+                    int held = 0;
+                    try (var stream = java.nio.file.Files.newDirectoryStream(dir, "r.*.mca")) {
+                        for (java.nio.file.Path file : stream) {
+                            try {
+                                // Only files with literally nothing in them; a region
+                                // holding any chunk is past the 8 KB header.
+                                if (java.nio.file.Files.size(file) == 0) {
+                                    java.nio.file.Files.delete(file);
+                                    removed++;
+                                }
+                            } catch (java.io.IOException e) {
+                                held++;
+                            }
+                        }
+                    } catch (java.io.IOException ignored) {
+                    }
+                    final String line = "Removed " + removed + " empty region files in this dimension"
+                            + (held > 0 ? " (" + held + " still held open, run again after a restart)" : "") + ".";
+                    ctx.getSource().sendSuccess(() -> Component.literal(line), false);
+                    return removed;
+                }))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("apitest")
                         .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
                                         "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
@@ -392,6 +418,7 @@ public class LocateMore implements ModInitializer {
         int absent;
         int loads;
         int loadHits;
+        int regionSkips;
         int indexHits;
         int memoHits;
 
