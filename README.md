@@ -67,8 +67,10 @@ async search never blocks a tick.
   where structures can generate mid-world, run `/locatemore index clear`. A
   stale entry can hide a structure under the new rules. It can never invent
   one.
-- Hard bounds: 1,000,000 block radius, 60 second wall clock, 50,000 candidate
-  checks, 2 concurrent searches. Partial results say so.
+- Default bounds: 1,000,000 block radius, 60 second wall clock, 50,000
+  candidate checks, 2 concurrent searches. Partial results say so. All of
+  them, plus a switch that forbids probe chunk generation entirely, live in
+  `config/locatemore.json`.
 - Spread-out structures in a fresh world need many chunk generations. The
   search throttles them to protect tick speed, so it can take seconds. The
   boss bar counts while it works.
@@ -94,8 +96,7 @@ because every line uses vanilla translation keys.
   locates, treasure maps, and eye-of-ender throws answer instantly
 - The same engine behind vanilla's own call sites: explorer maps, eyes of
   ender, cartographer trades
-- `next` to skip the structure you stand in, a config file, an API event for
-  other mods
+- `next` to skip the structure you stand in, and an API event for other mods
 
 ## Versions
 
