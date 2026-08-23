@@ -68,9 +68,14 @@ public final class AsyncLocate {
     private static final Logger LOGGER = LoggerFactory.getLogger("locatemore-async");
 
     /** Kill switch only; the deterministic bounds are distance + candidate caps. */
-    private static long wallClockLimitMs() {
-        return Config.wallClockSeconds * 1000L;
-    }
+    /**
+     * Waiting room for when every worker slot is busy: player searches admit
+     * first (an API consumer must never make a player's /locate feel slow),
+     * bounded so a runaway integrator fails fast instead of hoarding memory.
+     */
+    private static final java.util.ArrayDeque<Task> WAITING_PLAYERS = new java.util.ArrayDeque<>();
+    private static final java.util.ArrayDeque<Task> WAITING_API = new java.util.ArrayDeque<>();
+    private static final int MAX_WAITING = 64;
     private static final long SCAN_TIMEOUT_MS = 5_000;
 
     private static final int MAX_CHUNK_LOADS_IN_FLIGHT = 4;
@@ -181,11 +186,6 @@ public final class AsyncLocate {
         Task task = buildTask(source, key, printable, holders, count, excluded);
 
         Task previous = ACTIVE.get(key);
-        if (previous == null && ACTIVE.size() >= Config.maxActiveSearches) {
-            source.sendFailure(Component.literal(Config.maxActiveSearches + " searches are already running; try again shortly."));
-            return 0;
-        }
-        ACTIVE.put(key, task);
         if (previous != null) {
             previous.abort();
             source.sendSuccess(() -> Component.literal("Previous search superseded.").withStyle(ChatFormatting.GRAY), false);
@@ -195,7 +195,7 @@ public final class AsyncLocate {
         if (source.getEntity() instanceof ServerPlayer player) {
             task.attachBossBar(player);
         }
-        workerExecutor().execute(task::run);
+        submit(task, true);
         return 1;
     }
 
@@ -205,13 +205,8 @@ public final class AsyncLocate {
      * supersede a player's search or each other.
      */
     static CompletableFuture<LocateMoreApi.SearchResult> startForApi(ServerLevel level,
-            HolderSet<Structure> holders, BlockPos origin, int count) {
+            HolderSet<Structure> holders, BlockPos origin, int count, LocateMoreApi.SearchOptions options) {
         CompletableFuture<LocateMoreApi.SearchResult> sink = new CompletableFuture<>();
-        if (ACTIVE.size() >= Config.maxActiveSearches) {
-            sink.completeExceptionally(new IllegalStateException(
-                    Config.maxActiveSearches + " searches are already running"));
-            return sink;
-        }
         CommandSourceStack source = level.getServer().createCommandSourceStack()
                 .withSource(CommandSource.NULL)
                 .withLevel(level)
@@ -219,9 +214,59 @@ public final class AsyncLocate {
         Object key = new Object();
         Task task = buildTask(source, key, "structures (api)", holders, count, null);
         task.apiSink = sink;
-        ACTIVE.put(key, task);
-        workerExecutor().execute(task::run);
+        // Per-call overrides, server budgets as hard ceilings.
+        task.maxDistBlocks = Math.min(task.maxDistBlocks, Math.max(1, options.maxDistanceBlocks()));
+        task.wallClockMs = Math.min(task.wallClockMs, Math.max(1, options.maxMillis()));
+        task.allowGeneration = task.allowGeneration && options.allowChunkGeneration();
+        for (LocateMoreApi.StructureHit previous : options.excludePrevious()) {
+            ChunkPos chunk = new ChunkPos(previous.pos().getX() >> 4, previous.pos().getZ() >> 4);
+            task.preExcluded.add(new LocateMore.DedupKey(chunk.pack(), previous.structure().value()));
+        }
+        submit(task, false);
         return sink;
+    }
+
+    /** Admit into a free slot, or wait; player tasks always admit first. */
+    private static void submit(Task task, boolean playerPriority) {
+        synchronized (WAITING_PLAYERS) {
+            if (ACTIVE.size() < Config.maxActiveSearches) {
+                ACTIVE.put(task.key, task);
+                workerExecutor().execute(task::run);
+                return;
+            }
+            java.util.ArrayDeque<Task> queue = playerPriority ? WAITING_PLAYERS : WAITING_API;
+            if (WAITING_PLAYERS.size() + WAITING_API.size() >= MAX_WAITING) {
+                task.failEarly(MAX_WAITING + " searches already waiting; try again shortly.");
+                return;
+            }
+            queue.add(task);
+            task.notifyQueued(WAITING_PLAYERS.size() + WAITING_API.size());
+        }
+    }
+
+    /** Called when a slot frees; re-validates before running. */
+    private static void admitNext() {
+        Task next;
+        synchronized (WAITING_PLAYERS) {
+            if (ACTIVE.size() >= Config.maxActiveSearches) {
+                return;
+            }
+            next = WAITING_PLAYERS.poll();
+            if (next == null) {
+                next = WAITING_API.poll();
+            }
+            if (next == null) {
+                return;
+            }
+            ACTIVE.put(next.key, next);
+        }
+        if (next.aborted.get() || next.server.getLevel(next.dimension) == null) {
+            ACTIVE.remove(next.key, next);
+            next.failEarly("Search aborted while waiting.");
+            admitNext();
+            return;
+        }
+        workerExecutor().execute(next::run);
     }
 
     private static Task buildTask(CommandSourceStack source, Object key, String printable,
@@ -399,7 +444,7 @@ public final class AsyncLocate {
                 pending.result.complete(null);
                 continue;
             }
-            if (!Config.allowProbeChunkGeneration) {
+            if (!pending.task.allowGeneration) {
                 pending.task.unresolved++;
                 pending.result.complete(null);
                 continue;
@@ -508,6 +553,12 @@ public final class AsyncLocate {
         final DataFixer fixer;
         final long seed;
 
+        /** Per-task budgets; Config values are the defaults and the ceilings. */
+        long maxDistBlocks = LocateMore.maxDistBlocks();
+        long wallClockMs = Config.wallClockSeconds * 1000L;
+        boolean allowGeneration = Config.allowProbeChunkGeneration;
+        final java.util.Set<LocateMore.DedupKey> preExcluded = new java.util.HashSet<>();
+
         final AtomicBoolean aborted = new AtomicBoolean();
         /** Candidates lost to resolution failure or the probe-generation switch. */
         volatile int unresolved;
@@ -565,6 +616,30 @@ public final class AsyncLocate {
             bossBar.addPlayer(player);
         }
 
+        void failEarly(String reason) {
+            if (apiSink != null) {
+                apiSink.completeExceptionally(new IllegalStateException(reason));
+            } else {
+                server.execute(() -> {
+                    if (stillDeliverable()) {
+                        source.sendFailure(Component.literal(reason));
+                    }
+                });
+            }
+        }
+
+        void notifyQueued(int position) {
+            if (apiSink == null) {
+                server.execute(() -> {
+                    if (stillDeliverable()) {
+                        source.sendSuccess(() -> Component.literal(
+                                "All workers busy; queued at position " + position + ".")
+                                .withStyle(ChatFormatting.GRAY), false);
+                    }
+                });
+            }
+        }
+
         void abort() {
             if (aborted.compareAndSet(false, true)) {
                 if (apiSink != null) {
@@ -598,13 +673,14 @@ public final class AsyncLocate {
                 completed = true;
                 ACTIVE.remove(key, this);
                 server.execute(this::removeBossBar);
+                admitNext();
             }
         }
 
         private List<LocateMore.Hit> search(long startNanos) throws InterruptedException {
             regions = listRegions(((com.rasmus.locatemore.mixin.MinecraftServerAccessor) server)
                     .locatemore$storageSource().getDimensionPath(dimension).resolve("region"));
-            long maxDistSqr = LocateMore.maxDistBlocks() * LocateMore.maxDistBlocks();
+            long maxDistSqr = maxDistBlocks * maxDistBlocks;
             ChunkPos originChunk = new ChunkPos(origin.getX() >> 4, origin.getZ() >> 4);
             PriorityQueue<LocateMore.Candidate> queue =
                     new PriorityQueue<>(Comparator.comparingLong(LocateMore.Candidate::distSqr));
@@ -621,6 +697,7 @@ public final class AsyncLocate {
             if (excluded != null) {
                 seen.add(excluded); // next-mode: skip the structure the player stands in
             }
+            seen.addAll(preExcluded); // API: caller's previous hits
             // Two pipelines share one ordering barrier: shadow verifications
             // (scan + math) fan out to the math pool, chunk loads to the
             // server-thread resolver. Verified hits buffer and are finalized
@@ -793,7 +870,7 @@ public final class AsyncLocate {
 
         private boolean overBudget(long startNanos, int checked) {
             return checked >= LocateMore.MAX_CANDIDATE_CHECKS
-                    || (System.nanoTime() - startNanos) / 1_000_000L > wallClockLimitMs();
+                    || (System.nanoTime() - startNanos) / 1_000_000L > wallClockMs;
         }
 
         private record Shadow(LocateMore.VerifyResult result, boolean needsLoad, boolean knownAbsent) {
@@ -977,7 +1054,7 @@ public final class AsyncLocate {
                 }
                 if (hits.isEmpty()) {
                     source.sendFailure(Component.literal("No " + printable + " found within "
-                            + LocateMore.maxDistBlocks() + " blocks."));
+                            + maxDistBlocks + " blocks."));
                     return;
                 }
                 // A clean search earns a quiet line; the counters only appear when

@@ -17,6 +17,39 @@ import net.minecraft.world.level.levelgen.structure.Structure;
  */
 public final class LocateMoreApi {
 
+    /** Bumped only on breaking changes to this class. */
+    public static final int API_VERSION = 1;
+
+    /**
+     * Per-call overrides. Server budgets still apply as hard ceilings.
+     *
+     * @param maxDistanceBlocks   search radius cap, clamped to the server's
+     * @param allowChunkGeneration whether multi-set candidates may generate
+     *                             probe chunks; false means such candidates
+     *                             stay unresolved and the result is flagged
+     *                             with orderingGuaranteed=false instead of
+     *                             writing to the world
+     * @param maxMillis           wall-clock budget, clamped to the server's
+     * @param excludePrevious     hits from earlier searches to skip, so
+     *                            "find the next ones" is one call
+     */
+    public record SearchOptions(long maxDistanceBlocks, boolean allowChunkGeneration, long maxMillis,
+            java.util.Collection<StructureHit> excludePrevious) {
+
+        /** Instant and exact where provable, partial and flagged elsewhere. Never writes to the world. */
+        public static SearchOptions mathOnly() {
+            return new SearchOptions(Long.MAX_VALUE, false, 5_000L, java.util.List.of());
+        }
+
+        public static SearchOptions defaults() {
+            return new SearchOptions(Long.MAX_VALUE, true, Long.MAX_VALUE, java.util.List.of());
+        }
+
+        public SearchOptions excluding(java.util.Collection<StructureHit> previous) {
+            return new SearchOptions(maxDistanceBlocks, allowChunkGeneration, maxMillis, previous);
+        }
+    }
+
     /** One found structure: position, which structure, horizontal distance in blocks. */
     public record StructureHit(BlockPos pos, Holder<Structure> structure, double distance) {
     }
@@ -46,12 +79,23 @@ public final class LocateMoreApi {
      */
     public static CompletableFuture<SearchResult> findNearest(ServerLevel level, HolderSet<Structure> structures,
             BlockPos origin, int count) {
+        return findNearest(level, structures, origin, count, SearchOptions.defaults());
+    }
+
+    /**
+     * As above, with per-call options. When the active-search cap is full the
+     * request queues (bounded) instead of failing; the future completes
+     * exceptionally only when the queue itself is full or the search is
+     * aborted by a reload or server stop.
+     */
+    public static CompletableFuture<SearchResult> findNearest(ServerLevel level, HolderSet<Structure> structures,
+            BlockPos origin, int count, SearchOptions options) {
         if (!level.getServer().isSameThread()) {
             throw new IllegalStateException("LocateMoreApi.findNearest must be called on the server thread");
         }
         if (count < 1) {
             throw new IllegalArgumentException("count must be at least 1");
         }
-        return AsyncLocate.startForApi(level, structures, origin, Math.min(count, Config.maxCount));
+        return AsyncLocate.startForApi(level, structures, origin, Math.min(count, Config.maxCount), options);
     }
 }
