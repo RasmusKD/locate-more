@@ -44,9 +44,10 @@ Four mechanisms carry the speed:
   same trust covers the vanilla call sites: plain `/locate`, eyes of ender,
   and other mods calling vanilla's search. Only the lab modes keep real
   generation as their referee.
-- **The filesystem as the negative source.** Each search lists the region
-  directory once. A candidate whose region file is absent cannot be on disk
-  and goes straight to the math, with no disk round trip.
+- **The filesystem as the negative source.** A candidate whose region file
+  is absent cannot be on disk and goes straight to the math: one memoized
+  stat per region the search actually visits, so the cost tracks the search,
+  not the age of the world.
 - **Own verification path.** Vanilla keeps its structure cache on the server
   thread, so the worker never touches it. The worker scans chunk NBT itself,
   runs the biome math on a small thread pool, and sends the few candidates
@@ -65,24 +66,29 @@ Four mechanisms carry the speed:
 Release build, virgin world, seed 20260821, fixed position, 20 of each
 structure. Reproducible.
 
-Cold search, nothing warm, count 20 where the structure allows it:
+Cold search on a freshly booted server (JIT cold, memo empty), count 20;
+warm is the same search again in the same session. Cold cost is pure seed
+math across every candidate the count requires - no chunks are loaded or
+generated for any of these:
 
 | structure | cold | warm (memo) |
 |---|---|---|
-| mansion | 0.16 s | |
-| ancient_city | 0.11 s | |
-| monument | 0.22 s | |
-| jungle_pyramid (20 nearest) | 0.98 s | 0.06 s |
-| #village (tag, multi-set) | 1.4 s | |
-| fortress (Nether, multi-set) | 0.19 s | |
+| mansion | 1.7 s | 0.06 s |
+| ancient_city | 0.10 s | |
+| monument | 1.5 s | |
+| jungle_pyramid | 3.7 s | 0.10 s |
+| #village (tag, multi-set) | 0.17 s | |
+| fortress (Nether, multi-set) | 0.04 s | |
 
-Single-set structures are pure math: zero chunks loaded or generated, at any
-count. Before shipping that shortcut, a built-in referee counted 100%
-math-vs-generation agreement across the whole single-set battery, and an
-async search returned positions identical to the generation-backed sync mode
-from the same origin. Multi-set structures (villages, nether complexes)
-verify through real generation, and the `math=` counter in the summary line
-referees every such load.
+Ungenerated candidates are pure math on every path, single-set and
+multi-set alike: zero chunks loaded or generated, at any count, and the
+summary line's `avoided=` figure counts the loads the math replaced. Both
+trusts were earned by referees before they shipped (100% math agreement on
+the single-set battery; 427/427 draw predictions across 7 seeds), and two
+watchdogs stay on duty: the release battery generates the multi-set answers
+for real and diffs them against the trusted engine's, and a standing sample
+compares draw predictions against chunks already on disk
+(`drawSeen=` in the summary).
 
 Control, same world and warm cache: repeated vanilla nearest-searches took 10
 seconds and found 13 of 20. The async search never blocks a tick, and every
@@ -135,9 +141,10 @@ marks the contract.
   If you need exact vanilla parity, for speedrun practice or seed tooling:
   `/gamerule locatemore:exact_locate false` flips it live, per world. The
   `improveVanillaLocate` config key is the server-wide kill switch (the
-  effective value is the AND of both). The gamerule is the mod's one
-  deliberate exception to zero persistent state: it records intent in
-  level.dat, which vanilla ignores harmlessly if the mod is removed.
+  effective value is the AND of both). The gamerule lives in level.dat like
+  any gamerule and is harmless if the mod is removed; it selects which
+  engine answers, so it does not breach the state rule below - no LocateMore
+  state is ever an input to a search result.
 
 - For multi-structure sets, a structure in ungenerated terrain requires
   generating its candidate chunk to the first stage. Vanilla locate does the
@@ -160,7 +167,6 @@ marks the contract.
 | command | what |
 |---|---|
 | `/locate structure <id\|#tag> <count>` | async search, streams the N nearest |
-| `/locate structure <id> <count> next` | same, skipping the structure you stand in |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
 | `/locatemore prune` | delete empty region files (vanilla's scan path still leaves them, MC-311323) |
 | `/gamerule locatemore:exact_locate` | per-world toggle for the vanilla call sites |

@@ -179,13 +179,8 @@ public final class AsyncLocate {
     // ------------------------------------------------------------------
 
     public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders, int count) {
-        return start(source, printable, holders, count, null);
-    }
-
-    public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders, int count,
-            LocateMore.DedupKey excluded) {
         Object key = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console";
-        Task task = buildTask(source, key, printable, holders, count, excluded);
+        Task task = buildTask(source, key, printable, holders, count);
 
         Task previous = ACTIVE.get(key);
         if (previous != null) {
@@ -214,7 +209,7 @@ public final class AsyncLocate {
                 .withLevel(level)
                 .withPosition(Vec3.atBottomCenterOf(origin));
         Object key = new Object();
-        Task task = buildTask(source, key, "structures (api)", holders, count, null);
+        Task task = buildTask(source, key, "structures (api)", holders, count);
         task.apiSink = sink;
         // Per-call overrides, server budgets as hard ceilings.
         task.maxDistBlocks = Math.min(task.maxDistBlocks, Math.max(1, options.maxDistanceBlocks()));
@@ -272,7 +267,7 @@ public final class AsyncLocate {
     }
 
     private static Task buildTask(CommandSourceStack source, Object key, String printable,
-            HolderSet<Structure> holders, int count, LocateMore.DedupKey excluded) {
+            HolderSet<Structure> holders, int count) {
         MinecraftServer server = source.getServer();
         ServerLevel level = source.getLevel();
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
@@ -313,7 +308,6 @@ public final class AsyncLocate {
         }
 
         return new Task(server, level.dimension(), source, key, printable, holders, count, origin,
-                excluded,
                 state, setByPlacement,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
@@ -518,9 +512,6 @@ public final class AsyncLocate {
                             }
                             return;
                         }
-                        if (pending.knownAbsent) {
-                            pending.task.chunksGenerated++;
-                        }
                         // Chunk is resident and vanilla's cache warm via
                         // onStructureLoad, so the vanilla-exact check is cheap.
                         // Scratch stats: the worker already counted this load.
@@ -600,7 +591,6 @@ public final class AsyncLocate {
         final Map<StructurePlacement, Set<Holder<Structure>>> byPlacement;
         final List<LocateMore.Candidate> concentric;
         /** Pre-seeded dedup key for next-mode: the structure the player stands in. */
-        final LocateMore.DedupKey excluded;
         final UUID playerId;
 
         // Captured for the shadow check; all safe off-thread per the audit.
@@ -626,7 +616,6 @@ public final class AsyncLocate {
         /** Set when the search ends normally, so leftover pending loads are dropped. */
         volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
-        int chunksGenerated;
         /** Math-vs-generation agreement: probe loads whose math verdict was present, and confirmations. */
         int mathLoads;
         int mathHits;
@@ -644,7 +633,6 @@ public final class AsyncLocate {
 
         Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
                 String printable, HolderSet<Structure> holders, int count, BlockPos origin,
-                LocateMore.DedupKey excluded,
                 ChunkGeneratorStructureState state, Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement,
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
@@ -662,7 +650,6 @@ public final class AsyncLocate {
             this.setByPlacement = setByPlacement;
             this.byPlacement = byPlacement;
             this.concentric = concentric;
-            this.excluded = excluded;
             this.registryAccess = registryAccess;
             this.generator = generator;
             this.biomeSource = biomeSource;
@@ -760,9 +747,6 @@ public final class AsyncLocate {
 
             List<LocateMore.Hit> hits = new ArrayList<>();
             Set<LocateMore.DedupKey> seen = new HashSet<>();
-            if (excluded != null) {
-                seen.add(excluded); // next-mode: skip the structure the player stands in
-            }
             seen.addAll(preExcluded); // API: caller's previous hits
             // Two pipelines share one ordering barrier: shadow verifications
             // (scan + math) fan out to the math pool, chunk loads to the
@@ -972,7 +956,6 @@ public final class AsyncLocate {
                 // generation would run the same computation for an
                 // ungenerated chunk (the referees earned that trust; see
                 // SetDraw).
-                scratch.regionSkips++;
                 return CompletableFuture.supplyAsync(
                         () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());
             }
@@ -1011,10 +994,8 @@ public final class AsyncLocate {
                 if (onDisk != null) {
                     int references = onDisk.getOrDefault(holder.value(), -1);
                     if (references == -1) {
-                        scratch.absent++;
                         continue;
                     }
-                    scratch.present++;
                     return new Shadow(new LocateMore.VerifyResult(
                             candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
                 }
@@ -1027,7 +1008,6 @@ public final class AsyncLocate {
                 // because candidates come from getPotentialStructureChunk
                 // and getRingPositionsFor.
                 if (!candidate.placement().isStructureChunk(state, pos.x(), pos.z())) {
-                    scratch.absent++;
                     continue;
                 }
                 if (structureCanStart(holder.value(), pos, scratch)) {
@@ -1044,7 +1024,6 @@ public final class AsyncLocate {
                         // Multi-structure sets still load: the weighted draw is
                         // generation's call to make.
                         scratch.mathSkips++;
-                        scratch.present++;
                         return new Shadow(new LocateMore.VerifyResult(
                                 candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
                     }
@@ -1064,7 +1043,6 @@ public final class AsyncLocate {
                         if (winner != null) {
                             for (Holder<Structure> requested : candidate.holders()) {
                                 if (requested.value() == winner.value()) {
-                                    scratch.present++;
                                     scratch.drawSkips++;
                                     return new Shadow(new LocateMore.VerifyResult(
                                             candidate.placement().getLocatePos(pos), requested, pos),
@@ -1073,7 +1051,6 @@ public final class AsyncLocate {
                             }
                             scratch.drawSkips++;
                         }
-                        scratch.absent++;
                         return ABSENT;
                     }
                     // Distrusted or oversized set: referee mode, predict and
@@ -1082,7 +1059,6 @@ public final class AsyncLocate {
                             member -> structureCanStart(member.value(), pos, scratch));
                     return new Shadow(null, true, true, predicted);
                 }
-                scratch.absent++;
             }
             return ABSENT;
         }
@@ -1226,13 +1202,15 @@ public final class AsyncLocate {
                     String note = unresolved > 0
                             ? baseNote + " - " + unresolved + " candidates unresolved; ordering not guaranteed"
                             : baseNote;
-                    String probeNote = chunksGenerated > 0
-                            ? " - generated " + chunksGenerated + " probe chunks" : "";
+                    String probeNote = mathLoads > 0
+                            ? " - generated " + mathLoads + " probe chunks" : "";
                     String mathNote = (mathLoads > 0 ? " math=" + mathHits + "/" + mathLoads : "")
                             + (drawLoads > 0 ? " draw=" + drawHits + "/" + drawLoads : "")
                             + (stats.drawSeen > 0 ? " drawSeen=" + stats.drawSeenHits + "/" + stats.drawSeen : "");
+                    String avoided = stats.mathSkips + stats.drawSkips > 0
+                            ? " avoided=" + (stats.mathSkips + stats.drawSkips) : "";
                     detail = " [loads=" + stats.loads + " loadHits=" + stats.loadHits
-                            + " memoHits=" + stats.memoHits + "]" + mathNote + note + probeNote;
+                            + " memoHits=" + stats.memoHits + avoided + "]" + mathNote + note + probeNote;
                 }
                 final String line = hits.size() + " nearest " + printable
                         + " (" + tookMs + " ms" + detail + ")";

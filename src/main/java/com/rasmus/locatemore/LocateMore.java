@@ -134,16 +134,17 @@ public class LocateMore implements ModInitializer {
         }
         structureArg.addChild(
                 RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
-                        .executes(ctx -> locateAsync(ctx, false))
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("next")
-                                .executes(ctx -> locateAsync(ctx, true)))
+                        .executes(LocateMore::locateAsync)
                         .build());
     }
 
     /**
-     * Operator tooling: verify (the NBT-parse drift tripwire) and prune
-     * (deletes the empty region files vanilla's scan path still leaves,
-     * see MC-311323).
+     * Operator tooling: verify (the NBT-parse drift tripwire) and prune.
+     * Prune deletes empty region files from vanilla's CREATE-on-scan path,
+     * and that path is not only upstream (MC-311323): this mod's own
+     * explorer-map route deliberately keeps vanilla's checkStructurePresence
+     * under skipKnown, so map searches litter too. Prune stays load-bearing
+     * even after Mojang fixes their side.
      */
     private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
@@ -226,7 +227,7 @@ public class LocateMore implements ModInitializer {
         return agree;
     }
 
-    private static int locateAsync(CommandContext<CommandSourceStack> ctx, boolean skipCurrent)
+    private static int locateAsync(CommandContext<CommandSourceStack> ctx)
             throws CommandSyntaxException {
         ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
                 ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
@@ -239,18 +240,8 @@ public class LocateMore implements ModInitializer {
                 key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
                 registry::get
         ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
-        DedupKey excluded = null;
-        if (skipCurrent) {
-            // The structure the player stands in; its chunk is loaded, so this
-            // is a cheap main-thread lookup.
-            StructureStart current = source.getLevel().structureManager()
-                    .getStructureWithPieceAt(BlockPos.containing(source.getPosition()), holders);
-            if (current != null && current.isValid()) {
-                excluded = new DedupKey(current.getChunkPos().pack(), current.getStructure());
-            }
-        }
         return AsyncLocate.start(source, printable, holders,
-                IntegerArgumentType.getInteger(ctx, "count"), excluded);
+                IntegerArgumentType.getInteger(ctx, "count"));
     }
 
     /** One confirmed structure, in the order it was found (= distance order in smart mode). */
@@ -288,11 +279,8 @@ public class LocateMore implements ModInitializer {
 
     /** Verification outcome buckets, reported in the header for measurements. */
     public static final class Stats {
-        int present;
-        int absent;
         int loads;
         int loadHits;
-        int regionSkips;
         int mathSkips;
         /** Multi-set loads avoided because the trusted draw named the winner. */
         int drawSkips;
@@ -302,11 +290,8 @@ public class LocateMore implements ModInitializer {
         int memoHits;
 
         void merge(Stats other) {
-            present += other.present;
-            absent += other.absent;
             loads += other.loads;
             loadHits += other.loadHits;
-            regionSkips += other.regionSkips;
             mathSkips += other.mathSkips;
             drawSkips += other.drawSkips;
             drawSeen += other.drawSeen;
@@ -332,11 +317,9 @@ public class LocateMore implements ModInitializer {
             StructureCheckResult check = structureManager.checkStructurePresence(
                     chunkTarget, structure.value(), placement, skipKnown);
             if (check == StructureCheckResult.START_NOT_PRESENT) {
-                stats.absent++;
                 continue;
             }
             if (check == StructureCheckResult.START_PRESENT && !skipKnown) {
-                stats.present++;
                 return new VerifyResult(placement.getLocatePos(chunkTarget), structure, chunkTarget);
             }
             // skipKnown: even a PRESENT verdict needs the real start loaded,
@@ -351,7 +334,6 @@ public class LocateMore implements ModInitializer {
             if (start != null && start.isValid()) {
                 if (skipKnown) {
                     if (!start.canBeReferenced()) {
-                        stats.absent++;
                         continue; // vanilla decides referencability, not us
                     }
                     structureManager.addReference(start);
@@ -611,7 +593,6 @@ public class LocateMore implements ModInitializer {
                 // our candidates; frequency and exclusion zones do the work).
                 if (!candidate.placement().isStructureChunk(
                         state, candidate.pos().x(), candidate.pos().z())) {
-                    stats.absent++;
                     continue;
                 }
                 checkedOut[0]++;
@@ -651,7 +632,6 @@ public class LocateMore implements ModInitializer {
                         }
                     }
                     if (requested) {
-                        stats.present++;
                         if (trustSet.structures().size() == 1) {
                             stats.mathSkips++;
                         } else {
@@ -660,7 +640,6 @@ public class LocateMore implements ModInitializer {
                         found = new VerifyResult(candidate.placement().getLocatePos(candidate.pos()),
                                 winner, candidate.pos());
                     } else {
-                        stats.absent++;
                         if (winner != null) {
                             stats.drawSkips++;
                         }

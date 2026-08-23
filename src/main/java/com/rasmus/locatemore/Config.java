@@ -24,7 +24,10 @@ public final class Config {
     private static volatile int wallClockSeconds = 60;
     /** Search gives up past this many blocks from the origin. */
     private static volatile long maxDistanceBlocks = 1_000_000;
-    /** Upper bound for the count argument. */
+    /**
+     * Upper bound for the count argument. Read once at command registration,
+     * so a change applies after restart; it does not clamp API calls.
+     */
     private static volatile int maxCount = 100;
     /** Concurrent searches; also sizes the worker pool. */
     private static volatile int maxActiveSearches = 2;
