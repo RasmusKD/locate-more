@@ -103,7 +103,20 @@ public class LocateMore implements ModInitializer {
         return Config.maxDistanceBlocks();
     }
     /** Safety valves for pathological placements (checked inside expansion too). */
-    static final long SMART_TIME_BUDGET_MS = 15_000;
+    /**
+     * Budget for the vanilla-facing sync path. Sized from measurement, not
+     * caution: the worst case we could force on a mature 536-region world
+     * (a monument trade map, skipKnown, chunk generation on the thread) was
+     * 900 ms, so 3 s is 3x the worst observed while bounding a pathological
+     * stall at a fifth of the old 15 s ceiling. A give-up costs vanilla's
+     * own full search on top of the budget, so the budget must stay out of
+     * reach of measured reality; the give-up counter in findNearestExact
+     * watches that this holds. The lab's generation-backed searches get
+     * their own generous budget - they are the correctness gate and must
+     * run to completion.
+     */
+    static final long SMART_TIME_BUDGET_MS = 3_000;
+    static final long LAB_TIME_BUDGET_MS = 600_000;
     static final int MAX_CANDIDATE_CHECKS = 50_000;
 
     @Override
@@ -428,7 +441,7 @@ public class LocateMore implements ModInitializer {
         long startNanos = System.nanoTime();
         int[] checked = new int[1];
         List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(),
-                ringRadius, gaveUp, true, skipExistingChunks);
+                ringRadius, gaveUp, true, skipExistingChunks, SMART_TIME_BUDGET_MS);
         if (gaveUp[0]) {
             // Measurement for the sync budget decision: how often real play
             // hits the 15 s wall (a give-up costs vanilla's own full search
@@ -490,18 +503,18 @@ public class LocateMore implements ModInitializer {
     public static List<Hit> labLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, int[] checkedOut, Stats stats) {
         return smartLocate(level, holders, origin, count, System.nanoTime(), checkedOut, stats,
-                Integer.MAX_VALUE, new boolean[1], false, false);
+                Integer.MAX_VALUE, new boolean[1], false, false, LAB_TIME_BUDGET_MS);
     }
 
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats) {
         return smartLocate(level, holders, origin, count, startNanos, checkedOut, stats,
-                Integer.MAX_VALUE, new boolean[1], false, false);
+                Integer.MAX_VALUE, new boolean[1], false, false, LAB_TIME_BUDGET_MS);
     }
 
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats,
-            int ringCap, boolean[] gaveUp, boolean trustMath, boolean skipKnown) {
+            int ringCap, boolean[] gaveUp, boolean trustMath, boolean skipKnown, long budgetMs) {
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
         StructureManager structureManager = level.structureManager();
         long seed = state.getLevelSeed();
@@ -572,7 +585,7 @@ public class LocateMore implements ModInitializer {
                         expanded = true;
                     }
                 }
-                if (syncOverBudget(startNanos, checkedOut[0])) {
+                if (syncOverBudget(startNanos, checkedOut[0], budgetMs)) {
                     gaveUp[0] = true;
                     break search;
                 }
@@ -662,7 +675,7 @@ public class LocateMore implements ModInitializer {
                             horizDistSqr(found.pos(), origin)));
                 }
             }
-            if (syncOverBudget(startNanos, checkedOut[0])) {
+            if (syncOverBudget(startNanos, checkedOut[0], budgetMs)) {
                 gaveUp[0] = true;
                 break;
             }
@@ -670,9 +683,9 @@ public class LocateMore implements ModInitializer {
         return hits;
     }
 
-    private static boolean syncOverBudget(long startNanos, int checked) {
+    private static boolean syncOverBudget(long startNanos, int checked, long budgetMs) {
         return checked >= MAX_CANDIDATE_CHECKS
-                || (System.nanoTime() - startNanos) / 1_000_000L > SMART_TIME_BUDGET_MS;
+                || (System.nanoTime() - startNanos) / 1_000_000L > budgetMs;
     }
 
     // ------------------------------------------------------------------
