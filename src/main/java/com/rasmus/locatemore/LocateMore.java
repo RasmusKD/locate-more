@@ -90,8 +90,12 @@ public class LocateMore implements ModInitializer {
     @Override
     public void onInitialize() {
         Config.load();
+        LocateMoreGameRules.init();
         AsyncLocate.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher));
+        LOGGER.info("Vanilla /locate, eyes of ender, and other mods now return the true nearest "
+                + "structure (MC-138887). Per world: /gamerule locatemore:exact_locate false. "
+                + "Server-wide kill switch: improveVanillaLocate in config/locatemore.json.");
     }
 
     private static void graft(CommandDispatcher<CommandSourceStack> dispatcher) {

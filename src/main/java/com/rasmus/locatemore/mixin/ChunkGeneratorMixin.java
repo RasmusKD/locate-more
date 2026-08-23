@@ -1,7 +1,7 @@
 package com.rasmus.locatemore.mixin;
 
 import com.mojang.datafixers.util.Pair;
-import com.rasmus.locatemore.Config;
+import com.rasmus.locatemore.LocateMoreGameRules;
 import com.rasmus.locatemore.LocateMore;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -31,7 +31,7 @@ public abstract class ChunkGeneratorMixin {
     private void locatemore$exactNearest(ServerLevel level, HolderSet<Structure> holders, BlockPos pos,
             int radius, boolean skipExistingChunks,
             CallbackInfoReturnable<Pair<BlockPos, Holder<Structure>>> cir) {
-        if (!Config.improveVanillaLocate || skipExistingChunks || LocateMore.LAB_BYPASS) {
+        if (!LocateMoreGameRules.enabled(level) || skipExistingChunks || LocateMore.LAB_BYPASS) {
             return;
         }
         boolean[] gaveUp = new boolean[1];

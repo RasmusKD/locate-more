@@ -104,11 +104,14 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 ## Limitations
 
 - **Plain `/locate` results deliberately differ from vanilla.** Vanilla can
-  return a structure that is not the nearest (MC-138887); with
-  `improveVanillaLocate` on (the default) this mod returns the true nearest,
-  for the command, for eyes of ender, and for other mods. If you need exact
-  vanilla parity, for speedrun practice or seed tooling, set the key to
-  false and every result matches vanilla again.
+  return a structure that is not the nearest (MC-138887); this mod returns
+  the true nearest, for the command, for eyes of ender, and for other mods.
+  If you need exact vanilla parity, for speedrun practice or seed tooling:
+  `/gamerule locatemore:exact_locate false` flips it live, per world. The
+  `improveVanillaLocate` config key is the server-wide kill switch (the
+  effective value is the AND of both). The gamerule is the mod's one
+  deliberate exception to zero persistent state: it records intent in
+  level.dat, which vanilla ignores harmlessly if the mod is removed.
 
 - For multi-structure sets, a structure in ungenerated terrain requires
   generating its candidate chunk to the first stage. Vanilla locate does the
