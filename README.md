@@ -112,6 +112,13 @@ marks the contract.
 - **Plain `/locate` results deliberately differ from vanilla.** Vanilla can
   return a structure that is not the nearest (MC-138887); this mod returns
   the true nearest, for the command, for eyes of ender, and for other mods.
+  Explorer maps (cartographer trades, treasure maps in chests, dolphins) go
+  through the engine too: candidates are walked in true distance order,
+  pruned with math where provable, and exactly the first candidate vanilla's
+  own skip-known filter and canBeReferenced accept is loaded - the reference
+  mutation is vanilla's addReference, never reimplemented. The multi-second
+  trade freeze becomes one chunk generation. Note that this path writes by
+  design: taking a map reference dirties that one chunk, exactly as vanilla.
   If you need exact vanilla parity, for speedrun practice or seed tooling:
   `/gamerule locatemore:exact_locate false` flips it live, per world. The
   `improveVanillaLocate` config key is the server-wide kill switch (the
@@ -148,12 +155,6 @@ marks the contract.
 Operator permission required, same as vanilla `/locate`. Structure tags and
 all dimensions work. Vanilla clients on a dedicated server see correct output,
 because every line uses vanilla translation keys.
-
-## Roadmap
-
-- Explorer maps and cartographer trades (the skip-known path) through the
-  engine; they keep the vanilla path for now because that path mutates
-  structure references
 
 ## Not on the roadmap
 

@@ -38,3 +38,7 @@
 4. [-1520, ~, 2816] (3200 blocks away)
 5. [-3344, ~, -160] (3347 blocks away)
 Shadow verify minecraft:mansion: 5 agree)
+1. [-1872, ~, -528] (skipKnown)
+2. [2944, ~, 3296] (skipKnown)
+1. [-151, ~, 89] (skipKnown)
+2. [-279, ~, 25] (skipKnown)

@@ -297,18 +297,23 @@ public class LocateMore implements ModInitializer {
      * structure iteration order and the CHUNK_LOAD_NEEDED chunk load.
      */
     static VerifyResult verify(Iterable<Holder<Structure>> structures, ServerLevel level,
-            StructureManager structureManager, StructurePlacement placement, ChunkPos chunkTarget, Stats stats) {
+            StructureManager structureManager, StructurePlacement placement, ChunkPos chunkTarget,
+            boolean skipKnown, Stats stats) {
         for (Holder<Structure> structure : structures) {
+            // skipKnown is vanilla's explorer-map filter verbatim: a start
+            // with references reads as NOT_PRESENT (checkStructureInfo).
             StructureCheckResult check = structureManager.checkStructurePresence(
-                    chunkTarget, structure.value(), placement, false);
+                    chunkTarget, structure.value(), placement, skipKnown);
             if (check == StructureCheckResult.START_NOT_PRESENT) {
                 stats.absent++;
                 continue;
             }
-            if (check == StructureCheckResult.START_PRESENT) {
+            if (check == StructureCheckResult.START_PRESENT && !skipKnown) {
                 stats.present++;
                 return new VerifyResult(placement.getLocatePos(chunkTarget), structure, chunkTarget);
             }
+            // skipKnown: even a PRESENT verdict needs the real start loaded,
+            // because taking the reference is the point of the call.
             stats.loads++;
             if (!Config.allowProbeChunkGeneration) {
                 continue; // admin forbade probe generation; skip like the async path
@@ -317,6 +322,13 @@ public class LocateMore implements ModInitializer {
             StructureStart start = structureManager.getStartForStructure(
                     SectionPos.bottomOf(chunk), structure.value(), chunk);
             if (start != null && start.isValid()) {
+                if (skipKnown) {
+                    if (!start.canBeReferenced()) {
+                        stats.absent++;
+                        continue; // vanilla decides referencability, not us
+                    }
+                    structureManager.addReference(start);
+                }
                 stats.loadHits++;
                 return new VerifyResult(placement.getLocatePos(start.getChunkPos()), structure, start.getChunkPos());
             }
@@ -402,11 +414,12 @@ public class LocateMore implements ModInitializer {
      * which case the caller must fall back to vanilla rather than trust null.
      */
     public static Pair<BlockPos, Holder<Structure>> findNearestExact(ServerLevel level,
-            HolderSet<Structure> holders, BlockPos origin, int ringRadius, boolean[] gaveUp) {
+            HolderSet<Structure> holders, BlockPos origin, int ringRadius, boolean skipExistingChunks,
+            boolean[] gaveUp) {
         long startNanos = System.nanoTime();
         int[] checked = new int[1];
         List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(),
-                ringRadius, gaveUp, true);
+                ringRadius, gaveUp, true, skipExistingChunks);
         if (hits.isEmpty()) {
             return null;
         }
@@ -422,18 +435,18 @@ public class LocateMore implements ModInitializer {
     public static List<Hit> labLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, int[] checkedOut, Stats stats) {
         return smartLocate(level, holders, origin, count, System.nanoTime(), checkedOut, stats,
-                Integer.MAX_VALUE, new boolean[1], false);
+                Integer.MAX_VALUE, new boolean[1], false, false);
     }
 
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats) {
         return smartLocate(level, holders, origin, count, startNanos, checkedOut, stats,
-                Integer.MAX_VALUE, new boolean[1], false);
+                Integer.MAX_VALUE, new boolean[1], false, false);
     }
 
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
             BlockPos origin, int count, long startNanos, int[] checkedOut, Stats stats,
-            int ringCap, boolean[] gaveUp, boolean trustMath) {
+            int ringCap, boolean[] gaveUp, boolean trustMath, boolean skipKnown) {
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
         StructureManager structureManager = level.structureManager();
         long seed = state.getLevelSeed();
@@ -530,7 +543,12 @@ public class LocateMore implements ModInitializer {
                     continue;
                 }
                 checkedOut[0]++;
-                if (trustRegions != null
+                // INVARIANT: this shortcut may only ever be PERMISSIVE. Under
+                // skipKnown the decision is always vanilla's (the filter and
+                // canBeReferenced evaluate per candidate); a too-restrictive
+                // shortcut here would skip a valid nearer candidate and break
+                // exactness. Math-absent still prunes for free either way.
+                if (trustRegions != null && !skipKnown
                         && trustSetSize.getOrDefault(candidate.placement(), 2) == 1
                         && !trustRegions.contains(ChunkPos.pack(
                                 candidate.pos().x() >> 5, candidate.pos().z() >> 5))) {
@@ -551,7 +569,7 @@ public class LocateMore implements ModInitializer {
                     }
                 } else {
                     found = verify(candidate.holders(), level, structureManager,
-                            candidate.placement(), candidate.pos(), stats);
+                            candidate.placement(), candidate.pos(), skipKnown, stats);
                 }
             }
             if (found != null) {

@@ -19,10 +19,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
  * /locate without a count, eyes of ender, and every mod calling this method
  * get the true nearest result (MC-138887) instead of the first raster hit.
  *
- * Scope: only createReference=false calls. The skip-known path (explorer
- * maps) carries reference-mutation semantics the engine deliberately does not
- * reimplement, and stays vanilla. If the engine gives up on a budget, vanilla
- * runs unchanged, so behavior can only improve, never regress.
+ * Both paths are covered. createReference=false is the pure search. The
+ * skip-known path (explorer maps, cartographer trades) walks candidates in
+ * true distance order, prunes with math where provable, and loads exactly
+ * the first candidate vanilla's own filter and canBeReferenced accept - the
+ * reference mutation itself is vanilla's addReference, never reimplemented.
+ * If the engine gives up on a budget, vanilla runs unchanged, so behavior
+ * can only improve, never regress.
  */
 @Mixin(ChunkGenerator.class)
 public abstract class ChunkGeneratorMixin {
@@ -31,11 +34,12 @@ public abstract class ChunkGeneratorMixin {
     private void locatemore$exactNearest(ServerLevel level, HolderSet<Structure> holders, BlockPos pos,
             int radius, boolean skipExistingChunks,
             CallbackInfoReturnable<Pair<BlockPos, Holder<Structure>>> cir) {
-        if (!LocateMoreGameRules.enabled(level) || skipExistingChunks || LocateMore.LAB_BYPASS) {
+        if (!LocateMoreGameRules.enabled(level) || LocateMore.LAB_BYPASS) {
             return;
         }
         boolean[] gaveUp = new boolean[1];
-        Pair<BlockPos, Holder<Structure>> hit = LocateMore.findNearestExact(level, holders, pos, radius, gaveUp);
+        Pair<BlockPos, Holder<Structure>> hit = LocateMore.findNearestExact(level, holders, pos, radius,
+                skipExistingChunks, gaveUp);
         if (!gaveUp[0]) {
             cir.setReturnValue(hit);
         }

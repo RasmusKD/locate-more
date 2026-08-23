@@ -498,7 +498,7 @@ public final class AsyncLocate {
                         try {
                             LocateMore.VerifyResult found = LocateMore.verify(pending.candidate.holders(), level,
                                     level.structureManager(), pending.candidate.placement(),
-                                    pending.candidate.pos(), new LocateMore.Stats());
+                                    pending.candidate.pos(), false, new LocateMore.Stats());
                             if (pending.knownAbsent) {
                                 // knownAbsent means this load exists only because the
                                 // math said present: generation is the referee.

@@ -24,7 +24,7 @@ if [ -n "$LAB_JAR" ]; then cp "$LAB_JAR" run/mods/; else echo "ADVARSEL: locatem
 grep -E '\[Server thread/INFO\]' test/last-run.log \
   | sed -E 's/^\[[0-9:]+\] \[Server thread\/INFO\] \(Minecraft\) //' \
   | grep -E '^([0-9]+\. \[|Shadow verify|The nearest)' \
-  | sed -E 's/([0-9]+ agree)[^)]*/\1/' > test/last-run.txt
+  | sed -E 's/([0-9]+ agree)[^)]*/\1/' | sed -E 's/\([0-9]+ ms, skipKnown\)/(skipKnown)/' > test/last-run.txt
 
 if [ "$1" = "--bless" ]; then
   cp test/last-run.txt "$GOLDEN"
