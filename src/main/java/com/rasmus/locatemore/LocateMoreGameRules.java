@@ -28,7 +28,7 @@ public final class LocateMoreGameRules {
 
     /** Effective switch for the vanilla call sites (mixin path). */
     public static boolean enabled(ServerLevel level) {
-        return Config.improveVanillaLocate && level.getGameRules().get(EXACT_LOCATE);
+        return Config.improveVanillaLocate() && level.getGameRules().get(EXACT_LOCATE);
     }
 
     /** Class-load trigger so registration happens during mod init. */

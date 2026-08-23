@@ -102,11 +102,18 @@ LocateMoreApi.findNearest(level, structures, origin, 5).thenAccept(result -> {
 });
 ```
 
-Call on the server thread; the future completes on the server thread with
-hits in exact distance order. When every worker slot is busy the request
-queues (player searches admit first) instead of failing. Server budgets from
-`locatemore.json` apply as hard ceilings; `SearchOptions` lowers them per
-call, turns off chunk generation (`SearchOptions.mathOnly()`: instant and
+The API lives in `com.rasmus.locatemore.api`; every other package is
+internal. Call on the server thread; the future completes on the server
+thread with hits in exact distance order. `SearchResult` carries two flags:
+`orderingGuaranteed` (false when unresolved candidates mean a nearer hit
+could be missing) and `complete` (false when a budget stopped the search
+before the space within range was exhausted - the difference between "only
+three exist" and "we ran out of time after three"). When every worker slot
+is busy the request queues (player searches admit first) instead of
+failing. Server budgets from `locatemore.json` apply as hard ceilings, but
+the chat-facing `maxCount` knob does not clamp API calls; `SearchOptions`
+lowers budgets per call, turns off chunk generation
+(`SearchOptions.mathOnly()`: instant and
 exact where provable, partial and flagged elsewhere, never writes to the
 world), and excludes previous hits so "find the next ones" is one call.
 When `result.orderingGuaranteed()` is false, a nearer structure may exist in

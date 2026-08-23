@@ -71,7 +71,26 @@ public class LocateMore implements ModInitializer {
      * unmodified vanilla, so the mixin steps aside. Volatile boolean instead
      * of a ThreadLocal: the flag is only ever toggled on the server thread,
      * and this read is on vanilla's own locate path. */
-    public static volatile boolean LAB_BYPASS = false;
+    private static volatile boolean labBypass = false;
+
+    /** Read by the mixin: lab-only escape hatch back to unmodified vanilla. */
+    public static boolean labBypass() {
+        return labBypass;
+    }
+
+    /**
+     * Lab hook. Outside a development environment the toggle only works when
+     * the local lab mod is actually present, so the shipped jar carries no
+     * public kill switch with a friendlier name than the config.
+     */
+    public static void setLabBypass(boolean value) {
+        var loader = net.fabricmc.loader.api.FabricLoader.getInstance();
+        if (!loader.isDevelopmentEnvironment() && !loader.isModLoaded("locatemorelab")) {
+            LOGGER.warn("setLabBypass ignored: lab mod not present");
+            return;
+        }
+        labBypass = value;
+    }
 
     private static final DynamicCommandExceptionType ERROR_STRUCTURE_INVALID = new DynamicCommandExceptionType(
             id -> Component.translatableEscape("commands.locate.structure.invalid", id));
@@ -81,7 +100,7 @@ public class LocateMore implements ModInitializer {
 
     /** Smart mode gives up past this many blocks out (config: maxDistanceBlocks). */
     static long maxDistBlocks() {
-        return Config.maxDistanceBlocks;
+        return Config.maxDistanceBlocks();
     }
     /** Safety valves for pathological placements (checked inside expansion too). */
     static final long SMART_TIME_BUDGET_MS = 15_000;
@@ -114,7 +133,7 @@ public class LocateMore implements ModInitializer {
             return;
         }
         structureArg.addChild(
-                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount))
+                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
                         .executes(ctx -> locateAsync(ctx, false))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("next")
                                 .executes(ctx -> locateAsync(ctx, true)))
@@ -318,7 +337,7 @@ public class LocateMore implements ModInitializer {
             // skipKnown: even a PRESENT verdict needs the real start loaded,
             // because taking the reference is the point of the call.
             stats.loads++;
-            if (!Config.allowProbeChunkGeneration) {
+            if (!Config.allowProbeChunkGeneration()) {
                 continue; // admin forbade probe generation; skip like the async path
             }
             ChunkAccess chunk = level.getChunk(chunkTarget.x(), chunkTarget.z(), ChunkStatus.STRUCTURE_STARTS);
@@ -463,6 +482,17 @@ public class LocateMore implements ModInitializer {
             out.append(holder.unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
         }
         return out.toString();
+    }
+
+    /**
+     * Internal bridge for {@link com.rasmus.locatemore.api.LocateMoreApi};
+     * not API, do not call. Exists because the public surface lives in its
+     * own package and the engine entry it delegates to is package-private.
+     */
+    public static java.util.concurrent.CompletableFuture<com.rasmus.locatemore.api.LocateMoreApi.SearchResult> apiStart(
+            ServerLevel level, HolderSet<Structure> structures, BlockPos origin, int count,
+            com.rasmus.locatemore.api.LocateMoreApi.SearchOptions options) {
+        return AsyncLocate.startForApi(level, structures, origin, count, options);
     }
 
     /**

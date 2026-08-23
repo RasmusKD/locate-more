@@ -21,27 +21,55 @@ public final class Config {
     private static final Logger LOGGER = LoggerFactory.getLogger("locatemore-config");
 
     /** Hard wall clock for one async search, seconds. */
-    public static volatile int wallClockSeconds = 60;
+    private static volatile int wallClockSeconds = 60;
     /** Search gives up past this many blocks from the origin. */
-    public static volatile long maxDistanceBlocks = 1_000_000;
+    private static volatile long maxDistanceBlocks = 1_000_000;
     /** Upper bound for the count argument. */
-    public static volatile int maxCount = 100;
+    private static volatile int maxCount = 100;
     /** Concurrent searches; also sizes the worker pool. */
-    public static volatile int maxActiveSearches = 2;
+    private static volatile int maxActiveSearches = 2;
     /**
      * Allow generating candidate chunks (to their first stage) for structures
      * in ungenerated terrain. Off means such candidates are skipped and the
      * summary reports a partial result; the world save never grows.
      */
-    public static volatile boolean allowProbeChunkGeneration = true;
+    private static volatile boolean allowProbeChunkGeneration = true;
     /**
      * Route vanilla's own nearest-structure search (plain /locate, eyes of
-     * ender, other mods) through the exact-order engine, fixing MC-138887.
-     * Explorer maps keep the vanilla path either way.
+     * ender, explorer maps, trades, other mods) through the exact-order
+     * engine, fixing MC-138887.
      */
-    public static volatile boolean improveVanillaLocate = true;
+    private static volatile boolean improveVanillaLocate = true;
 
     private Config() {
+    }
+
+    // Read-only accessors: the fields are deliberately not public, so no
+    // other mod on the classpath can silently rewrite operator settings
+    // (Config.improveVanillaLocate = false used to be one statement away).
+
+    public static int wallClockSeconds() {
+        return wallClockSeconds;
+    }
+
+    public static long maxDistanceBlocks() {
+        return maxDistanceBlocks;
+    }
+
+    public static int maxCount() {
+        return maxCount;
+    }
+
+    public static int maxActiveSearches() {
+        return maxActiveSearches;
+    }
+
+    public static boolean allowProbeChunkGeneration() {
+        return allowProbeChunkGeneration;
+    }
+
+    public static boolean improveVanillaLocate() {
+        return improveVanillaLocate;
     }
 
     public static void load() {

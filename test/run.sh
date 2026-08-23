@@ -16,6 +16,7 @@ cp test/server.properties run/server.properties
 printf 'eula=true\n' > run/eula.txt
 rm -rf run/world
 LAB_JAR=$(ls ../locatemore-lab/build/libs/locatemore-lab-*.jar 2>/dev/null | tail -1)
+rm -f run/mods/locatemore-lab-*.jar
 if [ -n "$LAB_JAR" ]; then cp "$LAB_JAR" run/mods/; else echo "ADVARSEL: locatemore-lab ikke bygget - sync-differentialen springes over"; fi
 
 { sleep 75; while IFS= read -r cmd; do echo "$cmd"; sleep 5; done < test/commands.txt; sleep 45; echo stop; } | ./gradlew runServer -q > test/last-run.log 2>&1 || true

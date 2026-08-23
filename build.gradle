@@ -49,7 +49,10 @@ tasks.register('verifyJar') {
     dependsOn 'assemble'
     doLast {
         def jarFile = file("build/libs/locatemore-${project.version}.jar")
-        def forbidden = ['probeVanilla', 'enableBenchmarkModes', 'apiSmokeTest', 'locatemorelab',
+        // 'locatemorelab' left the list when setLabBypass began gating on
+        // isModLoaded("locatemorelab"): the string is now the guard that keeps
+        // the lab hook inert in production, not a leaked dev surface.
+        def forbidden = ['probeVanilla', 'enableBenchmarkModes', 'apiSmokeTest',
                          'StructureCheckAccessor', 'ServerLevelStructureAccessor']
         def hits = []
         new java.util.zip.ZipFile(jarFile).withCloseable { zip ->

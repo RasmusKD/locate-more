@@ -1,5 +1,6 @@
 package com.rasmus.locatemore;
 
+import com.rasmus.locatemore.api.LocateMoreApi;
 import com.mojang.datafixers.DataFixer;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import java.util.ArrayList;
@@ -229,7 +230,7 @@ public final class AsyncLocate {
     /** Admit into a free slot, or wait; player tasks always admit first. */
     private static void submit(Task task, boolean playerPriority) {
         synchronized (WAITING_PLAYERS) {
-            if (ACTIVE.size() < Config.maxActiveSearches) {
+            if (ACTIVE.size() < Config.maxActiveSearches()) {
                 ACTIVE.put(task.key, task);
                 workerExecutor().execute(task::run);
                 return;
@@ -248,7 +249,7 @@ public final class AsyncLocate {
     private static void admitNext() {
         Task next;
         synchronized (WAITING_PLAYERS) {
-            if (ACTIVE.size() >= Config.maxActiveSearches) {
+            if (ACTIVE.size() >= Config.maxActiveSearches()) {
                 return;
             }
             next = WAITING_PLAYERS.poll();
@@ -396,7 +397,7 @@ public final class AsyncLocate {
             java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
             // Sized to the active-search cap so a second search runs instead of
             // queuing behind the first with a frozen progress bar.
-            worker = Executors.newFixedThreadPool(Config.maxActiveSearches, r -> {
+            worker = Executors.newFixedThreadPool(Config.maxActiveSearches(), r -> {
                 Thread thread = new Thread(r, "LocateMore-Worker-" + n.incrementAndGet());
                 thread.setDaemon(true);
                 return thread;
@@ -598,8 +599,8 @@ public final class AsyncLocate {
 
         /** Per-task budgets; Config values are the defaults and the ceilings. */
         long maxDistBlocks = LocateMore.maxDistBlocks();
-        long wallClockMs = Config.wallClockSeconds * 1000L;
-        boolean allowGeneration = Config.allowProbeChunkGeneration;
+        long wallClockMs = Config.wallClockSeconds() * 1000L;
+        boolean allowGeneration = Config.allowProbeChunkGeneration();
         final java.util.Set<LocateMore.DedupKey> preExcluded = new java.util.HashSet<>();
 
         final AtomicBoolean aborted = new AtomicBoolean();
@@ -615,6 +616,8 @@ public final class AsyncLocate {
         /** Draw referee (multi-member sets): predictions judged by loads, and agreements. */
         int drawLoads;
         int drawHits;
+        /** True when a budget (wall clock or load cap) cut the search short. */
+        boolean budgetStopped;
         /** When set, results complete this future instead of going to chat. */
         volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
         /** Regions with chunk data on disk; null means unknown, scan everything. */
@@ -845,6 +848,7 @@ public final class AsyncLocate {
                     break;
                 }
                 if (overBudget(startNanos, checked)) {
+                    budgetStopped = true;
                     break;
                 }
                 // Backpressure: bound speculation (and probe-chunk creation).
@@ -863,7 +867,11 @@ public final class AsyncLocate {
                             expanded = true;
                         }
                     }
-                    if (aborted.get() || overBudget(startNanos, checked)) {
+                    if (aborted.get()) {
+                        break search;
+                    }
+                    if (overBudget(startNanos, checked)) {
+                        budgetStopped = true;
                         break search;
                     }
                 }
@@ -1133,7 +1141,8 @@ public final class AsyncLocate {
                         out.add(new LocateMoreApi.StructureHit(hit.pos(), hit.holder(),
                                 Math.sqrt((double) hit.horizDistSqr())));
                     }
-                    apiSink.complete(new LocateMoreApi.SearchResult(List.copyOf(out), unresolved == 0, tookMs));
+                    apiSink.complete(new LocateMoreApi.SearchResult(List.copyOf(out), unresolved == 0,
+                            hits.size() >= count || !budgetStopped, tookMs));
                     return;
                 }
                 if (!stillDeliverable()) {

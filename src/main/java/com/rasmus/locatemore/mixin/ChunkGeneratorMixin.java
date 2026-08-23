@@ -34,7 +34,7 @@ public abstract class ChunkGeneratorMixin {
     private void locatemore$exactNearest(ServerLevel level, HolderSet<Structure> holders, BlockPos pos,
             int radius, boolean skipExistingChunks,
             CallbackInfoReturnable<Pair<BlockPos, Holder<Structure>>> cir) {
-        if (!LocateMoreGameRules.enabled(level) || LocateMore.LAB_BYPASS) {
+        if (!LocateMoreGameRules.enabled(level) || LocateMore.labBypass()) {
             return;
         }
         boolean[] gaveUp = new boolean[1];
