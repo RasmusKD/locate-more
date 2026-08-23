@@ -11,3 +11,5 @@ audit-bundle.zip
 audit-round-*.md
 audit4/
 mr_*.json
+test/last-run.log
+test/last-run.txt
