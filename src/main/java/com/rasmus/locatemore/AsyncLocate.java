@@ -323,35 +323,43 @@ public final class AsyncLocate {
     }
 
     /**
-     * The region files that can actually hold chunks (bigger than the 8 KB
-     * header). Listed once per search: a candidate whose region is not here
-     * cannot be on disk, so the scan is skipped. That also sidesteps
-     * vanilla's scan path, whose RegionFile opens with CREATE and would
-     * write an empty region file for every unexplored candidate.
-     * Returns null when the directory cannot be listed (scan everything).
+     * Lazily answers whether a region file may hold chunks (the file exists
+     * and is larger than a bare 8 KB header). A candidate whose region file
+     * is absent cannot be on disk, so the scan is skipped - which also
+     * sidesteps vanilla's scan path, whose RegionFile opens with CREATE and
+     * would write an empty region file for every unexplored candidate.
+     *
+     * <p>This replaced a full directory enumeration that cost O(files in
+     * the world) per search - on the server thread for the vanilla call
+     * sites - with one memoized stat per region actually visited. It is
+     * also evaluated when the candidate is examined rather than snapshotted
+     * at search start, which shrinks the fresh-world window where spawn
+     * regions are written mid-search from the whole search to one stat.
+     * Conservative on errors: an unreadable file means "scan it".
+     * One instance per search, confined to that search's thread.
      */
-    static it.unimi.dsi.fastutil.longs.LongOpenHashSet listRegions(java.nio.file.Path regionDir) {
-        it.unimi.dsi.fastutil.longs.LongOpenHashSet out = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-        try (var stream = java.nio.file.Files.newDirectoryStream(regionDir, "r.*.mca")) {
-            for (java.nio.file.Path file : stream) {
-                String[] parts = file.getFileName().toString().split("\\.");
-                if (parts.length != 4) {
-                    continue;
-                }
-                try {
-                    if (java.nio.file.Files.size(file) > 8192) {
-                        out.add(ChunkPos.pack(Integer.parseInt(parts[1]), Integer.parseInt(parts[2])));
-                    }
-                } catch (NumberFormatException | java.io.IOException ignored) {
-                }
-            }
-        } catch (java.nio.file.NoSuchFileException e) {
-            return out; // fresh dimension: nothing on disk yet
-        } catch (java.io.IOException e) {
-            LOGGER.warn("Could not list {}; scanning without the region catalog", regionDir, e);
-            return null;
+    static final class RegionCatalog {
+        private final java.nio.file.Path regionDir;
+        private final java.util.HashMap<Long, Boolean> cache = new java.util.HashMap<>();
+
+        RegionCatalog(java.nio.file.Path regionDir) {
+            this.regionDir = regionDir;
         }
-        return out;
+
+        boolean mayHoldChunks(ChunkPos chunk) {
+            int rx = chunk.x() >> 5;
+            int rz = chunk.z() >> 5;
+            return cache.computeIfAbsent(ChunkPos.pack(rx, rz), key -> {
+                try {
+                    return java.nio.file.Files.size(
+                            regionDir.resolve("r." + rx + "." + rz + ".mca")) > 8192;
+                } catch (java.nio.file.NoSuchFileException e) {
+                    return false;
+                } catch (java.io.IOException e) {
+                    return true;
+                }
+            });
+        }
     }
 
     /**
@@ -610,7 +618,7 @@ public final class AsyncLocate {
         /** When set, results complete this future instead of going to chat. */
         volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
         /** Regions with chunk data on disk; null means unknown, scan everything. */
-        private it.unimi.dsi.fastutil.longs.LongOpenHashSet regions;
+        private RegionCatalog regions;
         private volatile ServerBossEvent bossBar;
         private long lastProgressPush;
 
@@ -716,7 +724,7 @@ public final class AsyncLocate {
         }
 
         private List<LocateMore.Hit> search(long startNanos) throws InterruptedException {
-            regions = listRegions(((com.rasmus.locatemore.mixin.MinecraftServerAccessor) server)
+            regions = new RegionCatalog(((com.rasmus.locatemore.mixin.MinecraftServerAccessor) server)
                     .locatemore$storageSource().getDimensionPath(dimension).resolve("region"));
             long maxDistSqr = maxDistBlocks * maxDistBlocks;
             ChunkPos originChunk = new ChunkPos(origin.getX() >> 4, origin.getZ() >> 4);
@@ -932,11 +940,13 @@ public final class AsyncLocate {
         private CompletableFuture<ShadowDone> dispatchShadow(LocateMore.Candidate candidate) {
             LocateMore.Stats scratch = new LocateMore.Stats();
             ChunkPos pos = candidate.pos();
-            if (regions != null && !regions.contains(ChunkPos.pack(pos.x() >> 5, pos.z() >> 5))) {
-                // No region file, so the chunk cannot be on disk: straight to
-                // math. A region saved after the listing costs one redundant
-                // load at worst, because math-present still resolves through
-                // the chunk system, which is ground truth.
+            if (!regions.mayHoldChunks(pos)) {
+                // No region file at the moment this candidate is examined, so
+                // the chunk cannot be on disk: straight to math. The math and
+                // draw verdicts are trusted on this path precisely because
+                // generation would run the same computation for an
+                // ungenerated chunk (the referees earned that trust; see
+                // SetDraw).
                 scratch.regionSkips++;
                 return CompletableFuture.supplyAsync(
                         () -> new ShadowDone(decide(candidate, null, scratch), scratch), mathPool());

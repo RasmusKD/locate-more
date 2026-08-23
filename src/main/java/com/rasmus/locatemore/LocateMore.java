@@ -423,11 +423,46 @@ public class LocateMore implements ModInitializer {
         int[] checked = new int[1];
         List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(),
                 ringRadius, gaveUp, true, skipExistingChunks);
+        if (gaveUp[0]) {
+            // Measurement for the sync budget decision: how often real play
+            // hits the 15 s wall (a give-up costs vanilla's own full search
+            // ON TOP of the budget, so this should be near zero). Counted
+            // always, warned once per dimension+structures per session.
+            GAVE_UP_COUNT++;
+            String structures = holderNames(holders);
+            String key = level.dimension().identifier() + "|" + structures;
+            if (GAVE_UP_WARNED.add(key)) {
+                LOGGER.warn("Sync search gave up after {} ms / {} candidates (structures [{}], "
+                                + "radius {}, skipKnown {}, dim {}); vanilla's own search runs "
+                                + "instead. Give-up {} this session.",
+                        (System.nanoTime() - startNanos) / 1_000_000L, checked[0], structures,
+                        ringRadius, skipExistingChunks, level.dimension().identifier(),
+                        GAVE_UP_COUNT);
+            }
+        }
         if (hits.isEmpty()) {
             return null;
         }
         Hit hit = hits.get(0);
         return Pair.of(hit.pos(), hit.holder());
+    }
+
+    private static int GAVE_UP_COUNT;
+    private static final Set<String> GAVE_UP_WARNED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static String holderNames(HolderSet<Structure> holders) {
+        StringBuilder out = new StringBuilder();
+        for (Holder<Structure> holder : holders) {
+            if (out.length() > 60) {
+                out.append(", ...");
+                break;
+            }
+            if (out.length() > 0) {
+                out.append(", ");
+            }
+            out.append(holder.unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
+        }
+        return out.toString();
     }
 
     /**
@@ -460,13 +495,13 @@ public class LocateMore implements ModInitializer {
         // async engine. The lab modes pass false and keep real generation as
         // their referee.
         Map<StructurePlacement, net.minecraft.world.level.levelgen.structure.StructureSet> trustSets = null;
-        it.unimi.dsi.fastutil.longs.LongOpenHashSet trustRegions = null;
+        AsyncLocate.RegionCatalog trustCatalog = null;
         if (trustMath) {
             trustSets = new java.util.IdentityHashMap<>();
             for (var setHolder : state.possibleStructureSets()) {
                 trustSets.put(setHolder.value().placement(), setHolder.value());
             }
-            trustRegions = AsyncLocate.listRegions(
+            trustCatalog = new AsyncLocate.RegionCatalog(
                     ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
                             .locatemore$storageSource().getDimensionPath(level.dimension()).resolve("region"));
         }
@@ -553,11 +588,10 @@ public class LocateMore implements ModInitializer {
                 // exactness. Math-absent still prunes for free either way.
                 net.minecraft.world.level.levelgen.structure.StructureSet trustSet =
                         trustSets == null ? null : trustSets.get(candidate.placement());
-                if (trustRegions != null && !skipKnown && trustSet != null
+                if (trustCatalog != null && !skipKnown && trustSet != null
                         && (trustSet.structures().size() == 1
                                 || SetDraw.trusted(candidate.placement(), trustSet.structures().size()))
-                        && !trustRegions.contains(ChunkPos.pack(
-                                candidate.pos().x() >> 5, candidate.pos().z() >> 5))) {
+                        && !trustCatalog.mayHoldChunks(candidate.pos())) {
                     // Region-absent candidate: generation would run exactly
                     // this math (findValidGenerationPoint per member, in draw
                     // order), so the first member that validates is the chunk's

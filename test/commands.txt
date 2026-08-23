@@ -7,6 +7,8 @@ execute in minecraft:the_nether positioned 0.0 70.0 0.0 run locate structure min
 execute positioned 0.0 100.0 0.0 run locate structure minecraft:buried_treasure 3
 execute positioned 0.0 100.0 0.0 run lmlab sync minecraft:mansion 5
 execute positioned 0.0 100.0 0.0 run lmlab sync minecraft:pillager_outpost 5
+execute positioned 0.0 100.0 0.0 run lmlab sync #minecraft:village 5
+execute in minecraft:the_nether positioned 0.0 70.0 0.0 run lmlab sync minecraft:fortress 5
 execute positioned 0.0 100.0 0.0 run locatemore verify minecraft:mansion
 execute positioned 0.0 100.0 0.0 run lmlab map minecraft:mansion
 execute positioned 0.0 100.0 0.0 run lmlab map minecraft:buried_treasure
