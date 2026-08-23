@@ -244,7 +244,20 @@ public class LocateMore implements ModInitializer {
             throws CommandSyntaxException {
         ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
                 ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
-        CommandSourceStack source = ctx.getSource();
+        return startAsync(ctx.getSource(), result, IntegerArgumentType.getInteger(ctx, "count"));
+    }
+
+    /**
+     * The vanilla one-result /locate structure, taken async by
+     * LocateCommandMixin: same engine, count 1, zero tick impact.
+     */
+    public static int vanillaLocateAsync(CommandSourceStack source,
+            ResourceOrTagKeyArgument.Result<Structure> result) throws CommandSyntaxException {
+        return startAsync(source, result, 1);
+    }
+
+    private static int startAsync(CommandSourceStack source,
+            ResourceOrTagKeyArgument.Result<Structure> result, int count) throws CommandSyntaxException {
         Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
         String printable = result.unwrap().map(
                 key -> key.identifier().toString(),
@@ -253,8 +266,7 @@ public class LocateMore implements ModInitializer {
                 key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
                 registry::get
         ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
-        return AsyncLocate.start(source, printable, holders,
-                IntegerArgumentType.getInteger(ctx, "count"));
+        return AsyncLocate.start(source, printable, holders, count);
     }
 
     /** One confirmed structure, in the order it was found (= distance order in smart mode). */

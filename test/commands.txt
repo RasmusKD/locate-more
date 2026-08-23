@@ -1,3 +1,4 @@
+execute positioned 0.0 100.0 0.0 run locate structure minecraft:mansion
 execute positioned 0.0 100.0 0.0 run locate structure minecraft:mansion 5
 execute positioned 0.0 100.0 0.0 run locate structure minecraft:ancient_city 5
 execute positioned 0.0 100.0 0.0 run locate structure minecraft:monument 5

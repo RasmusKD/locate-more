@@ -12,7 +12,10 @@ is [not always the nearest](https://bugs.mojang.com/browse/MC-138887).
 LocateMore adds an optional count from 1 to 100 to the vanilla command, and
 routes vanilla's own nearest-structure search through the same engine, so
 plain `/locate`, eyes of ender, and other mods get the true nearest too. The
-search runs off the server thread. Results stream into chat as they are
+/locate command - with or without a count - runs entirely off the server
+thread; the remaining synchronous-by-contract call sites (eyes of ender,
+trades) keep a budgeted on-thread search that falls back to vanilla if a
+worst-case query exceeds three seconds. Results stream into chat as they are
 confirmed, nearest first. Every line teleports on click. A boss bar shows
 progress.
 

@@ -187,8 +187,10 @@ public final class AsyncLocate {
             previous.abort();
             source.sendSuccess(() -> Component.literal("Previous search superseded.").withStyle(ChatFormatting.GRAY), false);
         }
-        source.sendSuccess(() -> Component.literal(
-                "Searching for the " + count + " nearest " + printable + "…").withStyle(ChatFormatting.GRAY), false);
+        source.sendSuccess(() -> Component.literal(count == 1
+                ? "Searching for the nearest " + printable + "…"
+                : "Searching for the " + count + " nearest " + printable + "…")
+                .withStyle(ChatFormatting.GRAY), false);
         if (source.getEntity() instanceof ServerPlayer player) {
             task.attachBossBar(player);
         }
@@ -1219,7 +1221,9 @@ public final class AsyncLocate {
                     detail = " [loads=" + stats.loads + " loadHits=" + stats.loadHits
                             + " memoHits=" + stats.memoHits + avoided + "]" + mathNote + note + probeNote;
                 }
-                final String line = hits.size() + " nearest " + printable
+                final String line = (count == 1 && hits.size() == 1
+                        ? "Nearest " + printable
+                        : hits.size() + " nearest " + printable)
                         + " (" + tookMs + " ms" + detail + ")";
                 source.sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.GRAY), false);
             });
