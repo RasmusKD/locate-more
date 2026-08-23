@@ -533,8 +533,11 @@ public final class AsyncLocate {
                                 if (agree) {
                                     pending.task.drawHits++;
                                 } else {
+                                    SetDraw.distrust(pending.candidate.placement());
                                     LOGGER.warn("Draw referee disagreement at chunk {} in {}: predicted {}, "
-                                                    + "generation produced {}.",
+                                                    + "generation produced {}. Draw trust is disabled for "
+                                                    + "this placement for the rest of the session; multi-set "
+                                                    + "candidates there fall back to chunk loads.",
                                             pending.candidate.pos(), level.dimension().identifier(),
                                             pending.predictedWinner.unwrapKey().map(k -> k.identifier().toString()).orElse("?"),
                                             found == null ? "nothing"
@@ -1002,10 +1005,37 @@ public final class AsyncLocate {
                         return new Shadow(new LocateMore.VerifyResult(
                                 candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
                     }
-                    // Multi-member set: the referee predicts generation's
-                    // winner (the first draw-ordered member whose generation
-                    // point validates) and the load then judges it. Trust
-                    // waits for the draw= counter to earn it.
+                    if (set != null && SetDraw.trusted(candidate.placement(), set.structures().size())) {
+                        // Multi-member set, trust earned: the draw replicates
+                        // generation's weighted pick (427/427 referee-confirmed
+                        // across 7 seeds before this shipped), so the first
+                        // draw-ordered member whose generation point validates
+                        // IS the chunk's winner. A requested winner is the
+                        // verdict; any other winner means this chunk belongs to
+                        // a different structure. The verify command still loads
+                        // and compares, and any observed disagreement distrusts
+                        // the placement for the session.
+                        for (Holder<Structure> member : SetDraw.order(seed, pos, set)) {
+                            if (structureCanStart(member.value(), pos, scratch)) {
+                                for (Holder<Structure> requested : candidate.holders()) {
+                                    if (requested.value() == member.value()) {
+                                        scratch.present++;
+                                        scratch.drawSkips++;
+                                        return new Shadow(new LocateMore.VerifyResult(
+                                                candidate.placement().getLocatePos(pos), requested, pos),
+                                                false, false, null);
+                                    }
+                                }
+                                scratch.absent++;
+                                scratch.drawSkips++;
+                                return ABSENT;
+                            }
+                        }
+                        scratch.absent++;
+                        return ABSENT;
+                    }
+                    // Distrusted or oversized set: referee mode, predict and
+                    // let the load judge it (draw=hits/loads in the summary).
                     Holder<Structure> predicted = null;
                     if (set != null) {
                         for (Holder<Structure> member : SetDraw.order(seed, pos, set)) {

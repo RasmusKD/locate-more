@@ -1,15 +1,16 @@
 # Porting checklist
 
-The mod replicates three vanilla behaviors. Every MC port must re-check each,
-because all three fail silently (wrong coordinates, not crashes).
+The mod replicates four vanilla behaviors. Every MC port must re-check each,
+because all four fail silently (wrong coordinates, not crashes).
 
-## 1. The three replications
+## 1. The four replications
 
 | ours | vanilla source of truth | breaks as |
 |---|---|---|
 | `ShadowScan.parse` | `StructureCheck.tryLoadFromStorage` (NBT shape, datafix context) | wrong absences |
 | `AsyncLocate.Task.decide` + the sync filter in `LocateMore.smartLocate` | `ChunkGenerator.createStructures` filter order: placement, then `applyAdditionalChunkRestrictions`, then `applyInteractionsWithOtherStructures` | wrong candidates |
 | `structureCanStart` / `mathCanStart` | `Structure.generate` calling the same `findValidGenerationPoint` (the single-set trust rests on this) | wrong positions |
+| `SetDraw.order` | the weighted without-replacement draw in `ChunkGenerator.createStructures` (`WorldgenRandom` + `setLargeFeatureSeed`, weight-subtraction roll, remove and retry on rejection); the multi-set trust rests on this | wrong structure type or false absences in shared placements |
 
 ## 2. Mapping-fragile surfaces
 
@@ -43,8 +44,10 @@ server on the same seed (`/locate structure ...` at 0,100,0):
 
 ## 5. Runtime tripwires (already shipped)
 
-- `math=hits/loads` referee in the summary line audits every multi-set load;
-  a miss logs a WARN with seed, dimension and chunk, once per structure.
+- `math=hits/loads` and `draw=hits/loads` referees in the summary line audit
+  every remaining multi-set load (distrusted or oversized sets); a miss logs a
+  WARN with seed, dimension and chunk, and a draw miss additionally distrusts
+  that placement for the session, falling back to chunk loads.
 - `/locatemore verify <structure>` compares the replicated NBT parse against
   vanilla's independent path over the 20 nearest.
 

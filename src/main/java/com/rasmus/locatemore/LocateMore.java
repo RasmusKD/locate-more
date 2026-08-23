@@ -275,6 +275,8 @@ public class LocateMore implements ModInitializer {
         int loadHits;
         int regionSkips;
         int mathSkips;
+        /** Multi-set loads avoided because the trusted draw named the winner. */
+        int drawSkips;
         int memoHits;
 
         void merge(Stats other) {
@@ -284,6 +286,7 @@ public class LocateMore implements ModInitializer {
             loadHits += other.loadHits;
             regionSkips += other.regionSkips;
             mathSkips += other.mathSkips;
+            drawSkips += other.drawSkips;
             memoHits += other.memoHits;
         }
     }
@@ -456,12 +459,12 @@ public class LocateMore implements ModInitializer {
         // other mods via the mixin) get the same single-set math trust as the
         // async engine. The lab modes pass false and keep real generation as
         // their referee.
-        Map<StructurePlacement, Integer> trustSetSize = null;
+        Map<StructurePlacement, net.minecraft.world.level.levelgen.structure.StructureSet> trustSets = null;
         it.unimi.dsi.fastutil.longs.LongOpenHashSet trustRegions = null;
         if (trustMath) {
-            trustSetSize = new java.util.IdentityHashMap<>();
+            trustSets = new java.util.IdentityHashMap<>();
             for (var setHolder : state.possibleStructureSets()) {
-                trustSetSize.put(setHolder.value().placement(), setHolder.value().structures().size());
+                trustSets.put(setHolder.value().placement(), setHolder.value());
             }
             trustRegions = AsyncLocate.listRegions(
                     ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
@@ -548,24 +551,53 @@ public class LocateMore implements ModInitializer {
                 // canBeReferenced evaluate per candidate); a too-restrictive
                 // shortcut here would skip a valid nearer candidate and break
                 // exactness. Math-absent still prunes for free either way.
-                if (trustRegions != null && !skipKnown
-                        && trustSetSize.getOrDefault(candidate.placement(), 2) == 1
+                net.minecraft.world.level.levelgen.structure.StructureSet trustSet =
+                        trustSets == null ? null : trustSets.get(candidate.placement());
+                if (trustRegions != null && !skipKnown && trustSet != null
+                        && (trustSet.structures().size() == 1
+                                || SetDraw.trusted(candidate.placement(), trustSet.structures().size()))
                         && !trustRegions.contains(ChunkPos.pack(
                                 candidate.pos().x() >> 5, candidate.pos().z() >> 5))) {
-                    // Region-absent single-set candidate: generation would run
-                    // exactly this math, so the verdict is the answer. This
-                    // also keeps vanilla's StructureCheck scan away from
-                    // ungenerated regions, where it would create empty files.
+                    // Region-absent candidate: generation would run exactly
+                    // this math (findValidGenerationPoint per member, in draw
+                    // order), so the first member that validates is the chunk's
+                    // winner and the verdict is the answer. For one-member sets
+                    // this degenerates to the original single-set shortcut; for
+                    // multi-member sets the draw replication carries it (427/427
+                    // referee-confirmed before trust shipped). This also keeps
+                    // vanilla's StructureCheck scan away from ungenerated
+                    // regions, where it would create empty files.
                     found = null;
-                    for (Holder<Structure> holder : candidate.holders()) {
-                        if (AsyncLocate.mathCanStart(level, holder.value(), candidate.pos())) {
-                            stats.present++;
-                            stats.mathSkips++;
-                            found = new VerifyResult(candidate.placement().getLocatePos(candidate.pos()),
-                                    holder, candidate.pos());
+                    Holder<Structure> winner = null;
+                    for (Holder<Structure> member : SetDraw.order(seed, candidate.pos(), trustSet)) {
+                        if (AsyncLocate.mathCanStart(level, member.value(), candidate.pos())) {
+                            winner = member;
                             break;
                         }
+                    }
+                    boolean requested = false;
+                    if (winner != null) {
+                        for (Holder<Structure> holder : candidate.holders()) {
+                            if (holder.value() == winner.value()) {
+                                requested = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (requested) {
+                        stats.present++;
+                        if (trustSet.structures().size() == 1) {
+                            stats.mathSkips++;
+                        } else {
+                            stats.drawSkips++;
+                        }
+                        found = new VerifyResult(candidate.placement().getLocatePos(candidate.pos()),
+                                winner, candidate.pos());
+                    } else {
                         stats.absent++;
+                        if (winner != null) {
+                            stats.drawSkips++;
+                        }
                     }
                 } else {
                     found = verify(candidate.holders(), level, structureManager,

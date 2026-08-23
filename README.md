@@ -32,12 +32,18 @@ Four mechanisms carry the speed:
   run exactly the math the worker just ran: the same generation-point
   function behind the same frequency and exclusion-zone filters. So a
   candidate that is not on disk needs no chunk at all; the verdict is the
-  answer. Multi-structure sets (villages, nether complexes) still resolve
-  through real generation, because the weighted draw between set members is
-  generation's call, and the summary line's `math=` counter referees every
-  such load. The same trust covers the vanilla call sites: plain `/locate`,
-  eyes of ender, and other mods calling vanilla's search. Only the lab modes
-  keep real generation as their referee.
+  answer. Multi-structure sets (villages, nether complexes) get the same
+  treatment through a replica of generation's weighted draw between the set
+  members: the first drawn member whose generation point validates is the
+  chunk's winner, so a fortress search skips the chunks the draw gives to
+  bastions without loading them. The replica shipped as a measure-only
+  referee first and earned trust with 427 of 427 predictions confirmed by
+  real chunk loads across 7 seeds; if any referee ever observes a
+  disagreement, that placement falls back to chunk loads for the session
+  with a WARN, and sets larger than 8 members (datapacks) always load. The
+  same trust covers the vanilla call sites: plain `/locate`, eyes of ender,
+  and other mods calling vanilla's search. Only the lab modes keep real
+  generation as their referee.
 - **The filesystem as the negative source.** Each search lists the region
   directory once. A candidate whose region file is absent cannot be on disk
   and goes straight to the math, with no disk round trip.
