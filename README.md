@@ -97,9 +97,15 @@ LocateMoreApi.findNearest(level, structures, origin, 5).thenAccept(result -> {
 ```
 
 Call on the server thread; the future completes on the server thread with
-hits in exact distance order. Server budgets from `locatemore.json` apply.
+hits in exact distance order. When every worker slot is busy the request
+queues (player searches admit first) instead of failing. Server budgets from
+`locatemore.json` apply as hard ceilings; `SearchOptions` lowers them per
+call, turns off chunk generation (`SearchOptions.mathOnly()`: instant and
+exact where provable, partial and flagged elsewhere, never writes to the
+world), and excludes previous hits so "find the next ones" is one call.
 When `result.orderingGuaranteed()` is false, a nearer structure may exist in
-a chunk the search was not allowed to resolve.
+a chunk the search was not allowed to resolve. `LocateMoreApi.API_VERSION`
+marks the contract.
 
 ## Limitations
 
