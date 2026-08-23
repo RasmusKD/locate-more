@@ -1,16 +1,19 @@
 # Porting checklist
 
-The mod replicates four vanilla behaviors. Every MC port must re-check each,
-because all four fail silently (wrong coordinates, not crashes).
+The mod replicates two vanilla behaviors and leans on two vanilla-API
+contracts. The replications are the port risk: their bytes are ours and they
+fail silently (wrong coordinates, not crashes). The contracts are cheaper:
+vanilla's own methods are called directly, so they only break if Mojang
+moves the decision elsewhere, which the constant-pool audit sees.
 
-## 1. The four replications
+## 1. The replicated and contracted behaviors
 
-| ours | vanilla source of truth | breaks as |
-|---|---|---|
-| `ShadowScan.parse` | `StructureCheck.tryLoadFromStorage` (NBT shape, datafix context) | wrong absences |
-| `AsyncLocate.Task.decide` + the sync filter in `LocateMore.smartLocate` | `ChunkGenerator.createStructures` filter order: placement, then `applyAdditionalChunkRestrictions`, then `applyInteractionsWithOtherStructures` | wrong candidates |
-| `structureCanStart` / `mathCanStart` | `Structure.generate` calling the same `findValidGenerationPoint` (the single-set trust rests on this) | wrong positions |
-| `SetDraw.order` | the weighted without-replacement draw in `ChunkGenerator.createStructures` (`WorldgenRandom` + `setLargeFeatureSeed`, weight-subtraction roll, remove and retry on rejection); the multi-set trust rests on this | wrong structure type or false absences in shared placements |
+| ours | vanilla source of truth | kind | breaks as |
+|---|---|---|---|
+| `SetDraw.order` | the weighted without-replacement draw in `ChunkGenerator.createStructures` (`WorldgenRandom` + `setLargeFeatureSeed`, weight-subtraction roll, remove and retry on rejection); the multi-set trust rests on this | replication | wrong structure type or false absences in shared placements |
+| `ShadowScan.parse` | `StructureCheck.tryLoadFromStorage` (NBT shape, datafix context) | replication | wrong absences (status-gated: an unrecognized format on a decided chunk fails to a load, not into the math) |
+| `structureCanStart` / `mathCanStart` | `Structure.generate` calling the same `findValidGenerationPoint` (all math trust rests on this) | contract | wrong positions, only if the decision moves |
+| `StructurePlacement.isStructureChunk` calls in both engines | `ChunkGenerator.createStructures` calling the same composed filter | contract | wrong candidates, only if the entry point changes |
 
 ## 2. Mapping-fragile surfaces
 

@@ -147,6 +147,7 @@ public final class AsyncLocate {
             // tag-backed, so memoized math verdicts can go stale.
             MATH_MEMO.clear();
             MATH_MEMO_SIZE.set(0);
+            SetDraw.onReload();
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (Task task : ACTIVE.values()) {
@@ -305,10 +306,10 @@ public final class AsyncLocate {
         // The set behind each placement: a one-member set has no weighted
         // draw (the math verdict is generation's verdict), and multi-member
         // sets need the whole set so the draw referee can predict the winner.
-        Map<StructurePlacement, net.minecraft.world.level.levelgen.structure.StructureSet> setByPlacement =
+        Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement =
                 new java.util.IdentityHashMap<>();
         for (var setHolder : state.possibleStructureSets()) {
-            setByPlacement.put(setHolder.value().placement(), setHolder.value());
+            setByPlacement.put(setHolder.value().placement(), setHolder);
         }
 
         return new Task(server, level.dimension(), source, key, printable, holders, count, origin,
@@ -368,20 +369,35 @@ public final class AsyncLocate {
      * with the async tasks. Mirrors Task.structureCanStart.
      */
     static boolean mathCanStart(ServerLevel level, Structure structure, ChunkPos pos) {
+        return canStartMemoized(level.dimension(), structure, pos, null, () -> {
+            HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
+            return new Structure.GenerationContext(
+                    level.registryAccess(), level.getChunkSource().getGenerator(),
+                    level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
+                    level.getStructureManager(),
+                    level.getChunkSource().getGeneratorState().getLevelSeed(), pos,
+                    LevelHeightAccessor.create(level.getMinY(), level.getHeight()), biomes::contains);
+        });
+    }
+
+    /**
+     * The one memoized math verdict both engines share; the callers differ
+     * only in how they assemble the generation context (the async worker
+     * caches level-derived fields so it never touches the level off-thread).
+     */
+    private static boolean canStartMemoized(ResourceKey<Level> dimension, Structure structure, ChunkPos pos,
+            LocateMore.Stats stats, java.util.function.Supplier<Structure.GenerationContext> context) {
         long pack = pos.pack();
-        MemoKey key = new MemoKey(level.dimension(), structure);
+        MemoKey key = new MemoKey(dimension, structure);
         ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
         Boolean cached = memo.get(pack);
         if (cached != null) {
+            if (stats != null) {
+                stats.memoHits++;
+            }
             return cached;
         }
-        HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
-        boolean possible = structure.findValidGenerationPoint(new Structure.GenerationContext(
-                level.registryAccess(), level.getChunkSource().getGenerator(),
-                level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
-                level.getStructureManager(),
-                level.getChunkSource().getGeneratorState().getLevelSeed(), pos,
-                LevelHeightAccessor.create(level.getMinY(), level.getHeight()), biomes::contains)).isPresent();
+        boolean possible = structure.findValidGenerationPoint(context.get()).isPresent();
         if (MATH_MEMO_SIZE.incrementAndGet() > MATH_MEMO_CAP) {
             MATH_MEMO.clear();
             MATH_MEMO_SIZE.set(0);
@@ -542,7 +558,8 @@ public final class AsyncLocate {
                                 if (agree) {
                                     pending.task.drawHits++;
                                 } else {
-                                    SetDraw.distrust(pending.candidate.placement());
+                                    var badSet = pending.task.setByPlacement.get(pending.candidate.placement());
+                                    SetDraw.distrust(badSet == null ? null : badSet.unwrapKey().orElse(null));
                                     LOGGER.warn("Draw referee disagreement at chunk {} in {}: predicted {}, "
                                                     + "generation produced {}. Draw trust is disabled for "
                                                     + "this placement for the rest of the session; multi-set "
@@ -579,7 +596,7 @@ public final class AsyncLocate {
         final BlockPos origin;
         /** Safe off-thread: every lazy init is forced by getPlacementsForStructure on the server thread. */
         final ChunkGeneratorStructureState state;
-        final Map<StructurePlacement, net.minecraft.world.level.levelgen.structure.StructureSet> setByPlacement;
+        final Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement;
         final Map<StructurePlacement, Set<Holder<Structure>>> byPlacement;
         final List<LocateMore.Candidate> concentric;
         /** Pre-seeded dedup key for next-mode: the structure the player stands in. */
@@ -628,7 +645,7 @@ public final class AsyncLocate {
         Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
                 String printable, HolderSet<Structure> holders, int count, BlockPos origin,
                 LocateMore.DedupKey excluded,
-                ChunkGeneratorStructureState state, Map<StructurePlacement, net.minecraft.world.level.levelgen.structure.StructureSet> setByPlacement,
+                ChunkGeneratorStructureState state, Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement,
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
                 RandomState randomState, StructureTemplateManager templateManager, LevelHeightAccessor heightAccessor,
@@ -987,6 +1004,9 @@ public final class AsyncLocate {
             if (onDisk == ShadowScan.SCAN_FAILED) {
                 return NEEDS_LOAD_SCAN_FAILED;
             }
+            if (onDisk != null) {
+                sampleDrawOnDisk(candidate, onDisk, scratch);
+            }
             for (Holder<Structure> holder : candidate.holders()) {
                 if (onDisk != null) {
                     int references = onDisk.getOrDefault(holder.value(), -1);
@@ -998,17 +1018,22 @@ public final class AsyncLocate {
                     return new Shadow(new LocateMore.VerifyResult(
                             candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
                 }
-                // Not on disk: vanilla's math path, in generation's own order
-                // (isStructureChunk = placement, then frequency, then exclusion
-                // zones; outposts refuse to spawn near village candidates).
-                if (!candidate.placement().applyAdditionalChunkRestrictions(pos.x(), pos.z(), seed)
-                        || !candidate.placement().applyInteractionsWithOtherStructures(state, pos.x(), pos.z())) {
+                // Not on disk: vanilla's math path. isStructureChunk is
+                // vanilla's own composition (placement, then frequency, then
+                // exclusion zones - outposts refuse to spawn near village
+                // candidates); calling it instead of hand-composing the two
+                // internals keeps the filter on vanilla's intended entry
+                // point. Its isPlacementChunk leg is redundant-true here,
+                // because candidates come from getPotentialStructureChunk
+                // and getRingPositionsFor.
+                if (!candidate.placement().isStructureChunk(state, pos.x(), pos.z())) {
                     scratch.absent++;
                     continue;
                 }
                 if (structureCanStart(holder.value(), pos, scratch)) {
+                    var setHolder = setByPlacement.get(candidate.placement());
                     net.minecraft.world.level.levelgen.structure.StructureSet set =
-                            setByPlacement.get(candidate.placement());
+                            setHolder == null ? null : setHolder.value();
                     if (set != null && set.structures().size() == 1) {
                         // Generation would run this exact math and nothing else
                         // (Structure.generate calls the same
@@ -1023,7 +1048,8 @@ public final class AsyncLocate {
                         return new Shadow(new LocateMore.VerifyResult(
                                 candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
                     }
-                    if (set != null && SetDraw.trusted(candidate.placement(), set.structures().size())) {
+                    if (set != null && SetDraw.trusted(
+                            setHolder.unwrapKey().orElse(null), set.structures().size())) {
                         // Multi-member set, trust earned: the draw replicates
                         // generation's weighted pick (427/427 referee-confirmed
                         // across 7 seeds before this shipped), so the first
@@ -1033,36 +1059,27 @@ public final class AsyncLocate {
                         // a different structure. The verify command still loads
                         // and compares, and any observed disagreement distrusts
                         // the placement for the session.
-                        for (Holder<Structure> member : SetDraw.order(seed, pos, set)) {
-                            if (structureCanStart(member.value(), pos, scratch)) {
-                                for (Holder<Structure> requested : candidate.holders()) {
-                                    if (requested.value() == member.value()) {
-                                        scratch.present++;
-                                        scratch.drawSkips++;
-                                        return new Shadow(new LocateMore.VerifyResult(
-                                                candidate.placement().getLocatePos(pos), requested, pos),
-                                                false, false, null);
-                                    }
+                        Holder<Structure> winner = SetDraw.winner(seed, pos, set,
+                                member -> structureCanStart(member.value(), pos, scratch));
+                        if (winner != null) {
+                            for (Holder<Structure> requested : candidate.holders()) {
+                                if (requested.value() == winner.value()) {
+                                    scratch.present++;
+                                    scratch.drawSkips++;
+                                    return new Shadow(new LocateMore.VerifyResult(
+                                            candidate.placement().getLocatePos(pos), requested, pos),
+                                            false, false, null);
                                 }
-                                scratch.absent++;
-                                scratch.drawSkips++;
-                                return ABSENT;
                             }
+                            scratch.drawSkips++;
                         }
                         scratch.absent++;
                         return ABSENT;
                     }
                     // Distrusted or oversized set: referee mode, predict and
                     // let the load judge it (draw=hits/loads in the summary).
-                    Holder<Structure> predicted = null;
-                    if (set != null) {
-                        for (Holder<Structure> member : SetDraw.order(seed, pos, set)) {
-                            if (structureCanStart(member.value(), pos, scratch)) {
-                                predicted = member;
-                                break;
-                            }
-                        }
-                    }
+                    Holder<Structure> predicted = set == null ? null : SetDraw.winner(seed, pos, set,
+                            member -> structureCanStart(member.value(), pos, scratch));
                     return new Shadow(null, true, true, predicted);
                 }
                 scratch.absent++;
@@ -1072,26 +1089,65 @@ public final class AsyncLocate {
 
 
 
+        /**
+         * The standing sample that keeps the draw trust honest after the
+         * flip: the load referee only ever saw ungenerated chunks, and
+         * trust removed most of those, so this samples the opposite
+         * population - multi-set candidates already generated on disk -
+         * where the comparison is free of I/O and generation. One in eight
+         * by chunk coordinate, deterministic. Log-only by design: a chunk
+         * on disk may predate the current MC version or datapack, so a
+         * mismatch here is a lead, not proof; auto-distrust stays with the
+         * load referee, whose ground truth is generated now.
+         */
+        private void sampleDrawOnDisk(LocateMore.Candidate candidate, Object2IntMap<Structure> onDisk,
+                LocateMore.Stats scratch) {
+            var setHolder = setByPlacement.get(candidate.placement());
+            if (setHolder == null || setHolder.value().structures().size() < 2) {
+                return;
+            }
+            ChunkPos pos = candidate.pos();
+            if (((pos.x() ^ pos.z()) & 7) != 0) {
+                return;
+            }
+            if (!candidate.placement().isStructureChunk(state, pos.x(), pos.z())) {
+                return;
+            }
+            LocateMore.Stats throwaway = new LocateMore.Stats();
+            Holder<Structure> winner = SetDraw.winner(seed, pos, setHolder.value(),
+                    member -> structureCanStart(member.value(), pos, throwaway));
+            boolean agree;
+            if (winner != null) {
+                agree = onDisk.getOrDefault(winner.value(), -1) != -1;
+            } else {
+                agree = true;
+                for (var entry : setHolder.value().structures()) {
+                    if (onDisk.getOrDefault(entry.structure().value(), -1) != -1) {
+                        agree = false;
+                        break;
+                    }
+                }
+            }
+            scratch.drawSeen++;
+            if (agree) {
+                scratch.drawSeenHits++;
+            } else {
+                LOGGER.warn("On-disk draw sample disagreement at chunk {} in {}: predicted {}. The chunk "
+                                + "may predate the current version or datapack, so this does not distrust "
+                                + "the draw by itself; investigate if it repeats on freshly generated chunks.",
+                        pos, dimension.identifier(),
+                        winner == null ? "no member"
+                                : winner.unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
+            }
+        }
+
         private boolean structureCanStart(Structure structure, ChunkPos pos, LocateMore.Stats scratch) {
-            long pack = pos.pack();
-            MemoKey key = new MemoKey(dimension, structure);
-            ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
-            Boolean cached = memo.get(pack);
-            if (cached != null) {
-                scratch.memoHits++;
-                return cached;
-            }
-            HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
-            boolean possible = structure.findValidGenerationPoint(new Structure.GenerationContext(
-                    registryAccess, generator, biomeSource, randomState, templateManager,
-                    seed, pos, heightAccessor, biomes::contains)).isPresent();
-            if (MATH_MEMO_SIZE.incrementAndGet() > MATH_MEMO_CAP) {
-                MATH_MEMO.clear();
-                MATH_MEMO_SIZE.set(0);
-                memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
-            }
-            memo.put(pack, possible);
-            return possible;
+            return canStartMemoized(dimension, structure, pos, scratch, () -> {
+                HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
+                return new Structure.GenerationContext(
+                        registryAccess, generator, biomeSource, randomState, templateManager,
+                        seed, pos, heightAccessor, biomes::contains);
+            });
         }
 
         // ------------------------------------------------------------------
@@ -1162,7 +1218,7 @@ public final class AsyncLocate {
                 // they explain something (chunk work, partial results, or a
                 // referee disagreement).
                 boolean interesting = stats.loads > 0 || unresolved > 0 || hits.size() < count
-                        || mathHits < mathLoads;
+                        || mathHits < mathLoads || stats.drawSeenHits < stats.drawSeen;
                 String detail = "";
                 if (interesting) {
                     String baseNote = hits.size() < count
@@ -1173,7 +1229,8 @@ public final class AsyncLocate {
                     String probeNote = chunksGenerated > 0
                             ? " - generated " + chunksGenerated + " probe chunks" : "";
                     String mathNote = (mathLoads > 0 ? " math=" + mathHits + "/" + mathLoads : "")
-                            + (drawLoads > 0 ? " draw=" + drawHits + "/" + drawLoads : "");
+                            + (drawLoads > 0 ? " draw=" + drawHits + "/" + drawLoads : "")
+                            + (stats.drawSeen > 0 ? " drawSeen=" + stats.drawSeenHits + "/" + stats.drawSeen : "");
                     detail = " [loads=" + stats.loads + " loadHits=" + stats.loadHits
                             + " memoHits=" + stats.memoHits + "]" + mathNote + note + probeNote;
                 }

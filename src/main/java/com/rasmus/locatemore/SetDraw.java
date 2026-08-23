@@ -33,21 +33,50 @@ final class SetDraw {
     /** Datapack guard: draws in larger sets fall back to chunk loads. */
     private static final int MAX_TRUSTED_MEMBERS = 8;
 
-    private static final java.util.Set<net.minecraft.world.level.levelgen.structure.placement.StructurePlacement> DISTRUSTED =
+    // Keyed on the set's registry key, not the placement instance: registry
+    // objects are rebuilt on datapack reload, and an identity key would have
+    // let every distrust silently evaporate on /reload.
+    private static final java.util.Set<net.minecraft.resources.ResourceKey<StructureSet>> DISTRUSTED =
             java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private SetDraw() {
     }
 
-    /** Whether the draw verdict may replace a chunk load for this placement. */
-    static boolean trusted(net.minecraft.world.level.levelgen.structure.placement.StructurePlacement placement,
-            int members) {
-        return members <= MAX_TRUSTED_MEMBERS && !DISTRUSTED.contains(placement);
+    /** Whether the draw verdict may replace a chunk load for this set. */
+    static boolean trusted(net.minecraft.resources.ResourceKey<StructureSet> key, int members) {
+        return key != null && members <= MAX_TRUSTED_MEMBERS && !DISTRUSTED.contains(key);
     }
 
     /** Session-wide fallback to loads after a referee-observed disagreement. */
-    static void distrust(net.minecraft.world.level.levelgen.structure.placement.StructurePlacement placement) {
-        DISTRUSTED.add(placement);
+    static void distrust(net.minecraft.resources.ResourceKey<StructureSet> key) {
+        if (key != null) {
+            DISTRUSTED.add(key);
+        }
+    }
+
+    /**
+     * Datapack reload rewrites the worldgen data the disagreement was
+     * observed against, so the evidence no longer applies; the referee
+     * re-establishes distrust on the next disagreement if it still holds.
+     */
+    static void onReload() {
+        DISTRUSTED.clear();
+    }
+
+    /**
+     * Generation's winner for this chunk: the first draw-ordered member
+     * whose generation point validates, or null when none does (nothing
+     * from this set generates here). The one place both engines ask the
+     * question.
+     */
+    static Holder<Structure> winner(long seed, ChunkPos pos, StructureSet set,
+            java.util.function.Predicate<Holder<Structure>> canStart) {
+        for (Holder<Structure> member : order(seed, pos, set)) {
+            if (canStart.test(member)) {
+                return member;
+            }
+        }
+        return null;
     }
 
     /** Members in the exact order generation would try them. */

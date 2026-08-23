@@ -45,6 +45,8 @@ public final class ShadowScan {
     public static CollectFields newCollector() {
         return new CollectFields(
                 new FieldSelector(IntTag.TYPE, "DataVersion"),
+                new FieldSelector(net.minecraft.nbt.StringTag.TYPE, "Status"),
+                new FieldSelector(net.minecraft.nbt.StringTag.TYPE, "status"),
                 new FieldSelector("Level", "Structures", CompoundTag.TYPE, "Starts"),
                 new FieldSelector("structures", CompoundTag.TYPE, "starts"));
     }
@@ -73,7 +75,15 @@ public final class ShadowScan {
         }
         Optional<CompoundTag> starts = fixed.getCompound("structures").flatMap(t -> t.getCompound("starts"));
         if (starts.isEmpty()) {
-            return null;
+            // A chunk at or past STRUCTURE_STARTS always carries the starts
+            // compound (empty when nothing generates), so its absence on such
+            // a chunk means the parse no longer recognizes the format - fail
+            // to a chunk load (slow-right), never into the math path
+            // (silently wrong wherever disk and current generation disagree).
+            // Below that status generation has not decided yet and the math
+            // IS the right authority.
+            String status = fixed.getString("status").orElse("minecraft:empty");
+            return "minecraft:empty".equals(status) ? null : SCAN_FAILED;
         }
         Object2IntMap<Structure> known = new Object2IntOpenHashMap<>();
         var registry = registryAccess.lookupOrThrow(Registries.STRUCTURE);

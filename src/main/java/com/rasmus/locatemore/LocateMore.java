@@ -296,6 +296,9 @@ public class LocateMore implements ModInitializer {
         int mathSkips;
         /** Multi-set loads avoided because the trusted draw named the winner. */
         int drawSkips;
+        /** On-disk draw sample (see AsyncLocate.sampleDrawOnDisk): observed, and agreements. */
+        int drawSeen;
+        int drawSeenHits;
         int memoHits;
 
         void merge(Stats other) {
@@ -306,6 +309,8 @@ public class LocateMore implements ModInitializer {
             regionSkips += other.regionSkips;
             mathSkips += other.mathSkips;
             drawSkips += other.drawSkips;
+            drawSeen += other.drawSeen;
+            drawSeenHits += other.drawSeenHits;
             memoHits += other.memoHits;
         }
     }
@@ -524,12 +529,12 @@ public class LocateMore implements ModInitializer {
         // other mods via the mixin) get the same single-set math trust as the
         // async engine. The lab modes pass false and keep real generation as
         // their referee.
-        Map<StructurePlacement, net.minecraft.world.level.levelgen.structure.StructureSet> trustSets = null;
+        Map<StructurePlacement, Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> trustSets = null;
         AsyncLocate.RegionCatalog trustCatalog = null;
         if (trustMath) {
             trustSets = new java.util.IdentityHashMap<>();
             for (var setHolder : state.possibleStructureSets()) {
-                trustSets.put(setHolder.value().placement(), setHolder.value());
+                trustSets.put(setHolder.value().placement(), setHolder);
             }
             trustCatalog = new AsyncLocate.RegionCatalog(
                     ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
@@ -601,12 +606,11 @@ public class LocateMore implements ModInitializer {
             if (candidate.resolved() != null) {
                 found = candidate.resolved();
             } else {
-                // Generation's own placement filter: frequency, then exclusion
-                // zones. Skipping these probed chunks generation would refuse.
-                if (!candidate.placement().applyAdditionalChunkRestrictions(
-                        candidate.pos().x(), candidate.pos().z(), seed)
-                        || !candidate.placement().applyInteractionsWithOtherStructures(
-                                state, candidate.pos().x(), candidate.pos().z())) {
+                // Generation's own placement filter, called through vanilla's
+                // composed entry point (isPlacementChunk is redundant-true for
+                // our candidates; frequency and exclusion zones do the work).
+                if (!candidate.placement().isStructureChunk(
+                        state, candidate.pos().x(), candidate.pos().z())) {
                     stats.absent++;
                     continue;
                 }
@@ -616,11 +620,14 @@ public class LocateMore implements ModInitializer {
                 // canBeReferenced evaluate per candidate); a too-restrictive
                 // shortcut here would skip a valid nearer candidate and break
                 // exactness. Math-absent still prunes for free either way.
-                net.minecraft.world.level.levelgen.structure.StructureSet trustSet =
+                Holder<net.minecraft.world.level.levelgen.structure.StructureSet> trustSetHolder =
                         trustSets == null ? null : trustSets.get(candidate.placement());
+                net.minecraft.world.level.levelgen.structure.StructureSet trustSet =
+                        trustSetHolder == null ? null : trustSetHolder.value();
                 if (trustCatalog != null && !skipKnown && trustSet != null
                         && (trustSet.structures().size() == 1
-                                || SetDraw.trusted(candidate.placement(), trustSet.structures().size()))
+                                || SetDraw.trusted(trustSetHolder.unwrapKey().orElse(null),
+                                        trustSet.structures().size()))
                         && !trustCatalog.mayHoldChunks(candidate.pos())) {
                     // Region-absent candidate: generation would run exactly
                     // this math (findValidGenerationPoint per member, in draw
@@ -632,13 +639,8 @@ public class LocateMore implements ModInitializer {
                     // vanilla's StructureCheck scan away from ungenerated
                     // regions, where it would create empty files.
                     found = null;
-                    Holder<Structure> winner = null;
-                    for (Holder<Structure> member : SetDraw.order(seed, candidate.pos(), trustSet)) {
-                        if (AsyncLocate.mathCanStart(level, member.value(), candidate.pos())) {
-                            winner = member;
-                            break;
-                        }
-                    }
+                    Holder<Structure> winner = SetDraw.winner(seed, candidate.pos(), trustSet,
+                            member -> AsyncLocate.mathCanStart(level, member.value(), candidate.pos()));
                     boolean requested = false;
                     if (winner != null) {
                         for (Holder<Structure> holder : candidate.holders()) {
