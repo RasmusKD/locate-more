@@ -79,8 +79,9 @@ verify through real generation, and the `math=` counter in the summary line
 referees every such load.
 
 Control, same world and warm cache: repeated vanilla nearest-searches took 10
-seconds and found 13 of 20. The lab mode `vanilla` reproduces that method. The
-async search never blocks a tick.
+seconds and found 13 of 20. The async search never blocks a tick, and every
+release is diffed coordinate-for-coordinate against real generation on a
+fixed seed before it ships (test/run.sh, PORTING.md).
 
 ## API for other mods
 
@@ -98,8 +99,7 @@ LocateMoreApi.findNearest(level, structures, origin, 5).thenAccept(result -> {
 Call on the server thread; the future completes on the server thread with
 hits in exact distance order. Server budgets from `locatemore.json` apply.
 When `result.orderingGuaranteed()` is false, a nearer structure may exist in
-a chunk the search was not allowed to resolve. `/locatemore apitest
-<structure> <count>` runs the same call from in game.
+a chunk the search was not allowed to resolve.
 
 ## Limitations
 
@@ -120,8 +120,7 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
   probes, on any path.
 - Nothing persists between sessions, so there is no state to go stale across
   restarts. Within a session, a datapack reload aborts running searches and
-  clears the math memo automatically; `/locatemore memo clear` does the same
-  by hand.
+  clears the math memo automatically.
 - Default bounds: 1,000,000 block radius, 60 second wall clock, 50,000
   candidate checks, 2 concurrent searches. Partial results say so. All of
   them, plus a switch that forbids probe chunk generation entirely, live in
@@ -136,14 +135,9 @@ a chunk the search was not allowed to resolve. `/locatemore apitest
 |---|---|
 | `/locate structure <id\|#tag> <count>` | async search, streams the N nearest |
 | `/locate structure <id> <count> next` | same, skipping the structure you stand in |
-| `/locate structure <id> <count> sync` | same algorithm, synchronous, for measurements (config-gated) |
-| `/locate structure <id> <count> vanilla` | vanilla-method lab, for measurements (config-gated) |
-| `/locatemore cache stats` | vanilla cache sizes |
-| `/locatemore cache clear` | clear vanilla's in-memory caches |
-| `/locatemore memo clear` | wipe the session math memo |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
-| `/locatemore prune` | delete empty region files (old mod versions and vanilla scans leave them) |
-| `/locatemore apitest <structure> <count>` | run the public API end to end |
+| `/locatemore prune` | delete empty region files (vanilla's scan path still leaves them, MC-311323) |
+| `/gamerule locatemore:exact_locate` | per-world toggle for the vanilla call sites |
 
 Operator permission required, same as vanilla `/locate`. Structure tags and
 all dimensions work. Vanilla clients on a dedicated server see correct output,
@@ -151,11 +145,17 @@ because every line uses vanilla translation keys.
 
 ## Roadmap
 
-- `prewarm <radius>`: index every structure set in an area up front, so later
-  locates, treasure maps, and eye-of-ender throws answer instantly
 - Explorer maps and cartographer trades (the skip-known path) through the
   engine; they keep the vanilla path for now because that path mutates
   structure references
+
+## Not on the roadmap
+
+- **prewarm.** Considered and dropped. Cold single-set searches are 0.1 to
+  0.2 s and touch no chunks, so there is nothing to warm. The only searches
+  with real cost are multi-set ones in ungenerated terrain, and warming those
+  means generating their chunks early: the same work, moved earlier, plus
+  save growth. Run Chunky if you want a warm world.
 
 ## Versions
 
