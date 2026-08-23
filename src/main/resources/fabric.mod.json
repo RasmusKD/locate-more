@@ -3,7 +3,7 @@
   "id": "locatemore",
   "version": "${version}",
   "name": "LocateMore",
-  "description": "Adds a count to /locate structure, so one command finds the N nearest instead of just the closest.",
+  "description": "Exact nearest structures, off the server thread. Adds a count to /locate, and fixes MC-138887 for /locate, eyes of ender, explorer maps, and every mod that searches for structures.",
   "authors": [
     "RasmusKD"
   ],
