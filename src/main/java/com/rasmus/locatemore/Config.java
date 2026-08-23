@@ -34,8 +34,6 @@ public final class Config {
      * summary reports a partial result; the world save never grows.
      */
     public static volatile boolean allowProbeChunkGeneration = true;
-    /** Expose the synchronous benchmark modes (sync/vanilla) to admins. */
-    public static volatile boolean enableBenchmarkModes = false;
     /**
      * Route vanilla's own nearest-structure search (plain /locate, eyes of
      * ender, other mods) through the exact-order engine, fixing MC-138887.
@@ -71,9 +69,6 @@ public final class Config {
                     if (json.has("allowProbeChunkGeneration")) {
                         allowProbeChunkGeneration = json.get("allowProbeChunkGeneration").getAsBoolean();
                     }
-                    if (json.has("enableBenchmarkModes")) {
-                        enableBenchmarkModes = json.get("enableBenchmarkModes").getAsBoolean();
-                    }
                     if (json.has("improveVanillaLocate")) {
                         improveVanillaLocate = json.get("improveVanillaLocate").getAsBoolean();
                     }
@@ -88,7 +83,6 @@ public final class Config {
         out.addProperty("maxCount", maxCount);
         out.addProperty("maxActiveSearches", maxActiveSearches);
         out.addProperty("allowProbeChunkGeneration", allowProbeChunkGeneration);
-        out.addProperty("enableBenchmarkModes", enableBenchmarkModes);
         out.addProperty("improveVanillaLocate", improveVanillaLocate);
         try {
             Files.createDirectories(path.getParent());

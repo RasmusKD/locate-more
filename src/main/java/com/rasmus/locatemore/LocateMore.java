@@ -61,29 +61,23 @@ import org.slf4j.LoggerFactory;
  * so cost scales with hits rather than area. Each region has exactly one
  * candidate chunk; the residual duplicate routes (one structure in several
  * structure sets, legacy re-queues) are collapsed by a dedup set keyed on
- * start identity. Appending "vanilla" runs the naive lab mode instead
- * (a grid of unmodified vanilla nearest-searches, deduped) so the two can
- * be timed against each other.
+ * start identity.
  */
 public class LocateMore implements ModInitializer {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("locatemore");
 
-    /** Set while lab mode measures unmodified vanilla, so the mixin steps aside. */
-    public static final ThreadLocal<Boolean> VANILLA_BYPASS = ThreadLocal.withInitial(() -> false);
+    /** Test-harness hook: the local lab mod sets this while measuring
+     * unmodified vanilla, so the mixin steps aside. Volatile boolean instead
+     * of a ThreadLocal: the flag is only ever toggled on the server thread,
+     * and this read is on vanilla's own locate path. */
+    public static volatile boolean LAB_BYPASS = false;
 
     private static final DynamicCommandExceptionType ERROR_STRUCTURE_INVALID = new DynamicCommandExceptionType(
             id -> Component.translatableEscape("commands.locate.structure.invalid", id));
     private static final DynamicCommandExceptionType ERROR_STRUCTURE_NOT_FOUND = new DynamicCommandExceptionType(
             id -> Component.translatableEscape("commands.locate.structure.not_found", id));
 
-    /** Same search radius as the vanilla command, in chunks (lab mode). */
-    private static final int VANILLA_RADIUS_CHUNKS = 100;
-    /** Distance between lab-mode probe points; vanilla's radius is 1600 blocks, so this overlaps. */
-    private static final int PROBE_STEP = 1024;
-    /** Lab mode: widen until the count is met or this runs out. */
-    private static final long PROBE_TIME_BUDGET_MS = 10_000;
-    private static final int PROBE_MAX_RING = 16;
 
     /** Smart mode gives up past this many blocks out (config: maxDistanceBlocks). */
     static long maxDistBlocks() {
@@ -120,47 +114,17 @@ public class LocateMore implements ModInitializer {
                         .executes(ctx -> locateAsync(ctx, false))
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("next")
                                 .executes(ctx -> locateAsync(ctx, true)))
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("sync")
-                                .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_ADMINS))
-                                .requires(src -> Config.enableBenchmarkModes)
-                                .executes(ctx -> locateMany(ctx, false)))
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("vanilla")
-                                .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_ADMINS))
-                                .requires(src -> Config.enableBenchmarkModes)
-                                .executes(ctx -> locateMany(ctx, true)))
                         .build());
     }
 
     /**
-     * Measurement tooling: /locatemore cache stats|clear inspects and clears
-     * vanilla's in-memory StructureCheck caches (via accessor mixin), so
-     * cold/warm timings can be decomposed in a single session instead of
-     * relying on rejoin experiments.
+     * Operator tooling: verify (the NBT-parse drift tripwire) and prune
+     * (deletes the empty region files vanilla's scan path still leaves,
+     * see MC-311323).
      */
     private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
                 .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_GAMEMASTERS))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("cache")
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("stats").executes(ctx -> {
-                            ServerLevel level = ctx.getSource().getLevel();
-                            var check = (com.rasmus.locatemore.mixin.StructureCheckAccessor)
-                                    ((com.rasmus.locatemore.mixin.ServerLevelStructureAccessor) level).locatemore$structureCheck();
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "StructureCheck: " + check.locatemore$loadedChunks().size() + " chunk entries, "
-                                            + check.locatemore$featureChecks().size() + " feature maps."), false);
-                            return 1;
-                        }))
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear").executes(ctx -> {
-                            ServerLevel level = ctx.getSource().getLevel();
-                            var check = (com.rasmus.locatemore.mixin.StructureCheckAccessor)
-                                    ((com.rasmus.locatemore.mixin.ServerLevelStructureAccessor) level).locatemore$structureCheck();
-                            int chunks = check.locatemore$loadedChunks().size();
-                            check.locatemore$loadedChunks().clear();
-                            check.locatemore$featureChecks().clear();
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "Cleared vanilla StructureCheck caches (" + chunks + " chunk entries)."), false);
-                            return 1;
-                        })))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("prune").executes(ctx -> {
                     ServerLevel level = ctx.getSource().getLevel();
                     java.nio.file.Path dir = ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
@@ -187,55 +151,10 @@ public class LocateMore implements ModInitializer {
                     ctx.getSource().sendSuccess(() -> Component.literal(line), false);
                     return removed;
                 }))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("apitest")
-                        .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
-                                        "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
-                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
-                                                "count", IntegerArgumentType.integer(1, 100))
-                                        .executes(LocateMore::apiSmokeTest))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
                         .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
                                         "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
-                                .executes(ctx -> verifyShadow(ctx, 20))))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("memo")
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("clear").executes(ctx -> {
-                            AsyncLocate.clearMathMemo();
-                            ctx.getSource().sendSuccess(() -> Component.literal(
-                                    "Cleared the math memo."), false);
-                            return 1;
-                        }))));
-    }
-
-    /** Exercises the public API surface end to end from in game. */
-    private static int apiSmokeTest(CommandContext<CommandSourceStack> ctx) throws CommandSyntaxException {
-        ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
-                ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
-        CommandSourceStack source = ctx.getSource();
-        Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
-        String printable = result.unwrap().map(
-                key -> key.identifier().toString(),
-                tag -> "#" + tag.location());
-        HolderSet<Structure> holders = result.unwrap().map(
-                key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
-                registry::get
-        ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
-        int count = IntegerArgumentType.getInteger(ctx, "count");
-        LocateMoreApi.findNearest(source.getLevel(), holders, BlockPos.containing(source.getPosition()), count)
-                .whenComplete((search, failure) -> {
-                    if (failure != null) {
-                        source.sendFailure(Component.literal("API failed: " + failure));
-                        return;
-                    }
-                    StringBuilder line = new StringBuilder("API: " + search.hits().size() + " hits in "
-                            + search.tookMillis() + " ms, ordering "
-                            + (search.orderingGuaranteed() ? "guaranteed" : "NOT guaranteed"));
-                    for (LocateMoreApi.StructureHit hit : search.hits()) {
-                        line.append(" [").append(hit.pos().getX()).append(',').append(hit.pos().getZ())
-                                .append(" d=").append((int) hit.distance()).append(']');
-                    }
-                    source.sendSuccess(() -> Component.literal(line.toString()), false);
-                });
-        return 1;
+                                .executes(ctx -> verifyShadow(ctx, 20)))));
     }
 
     /**
@@ -262,7 +181,6 @@ public class LocateMore implements ModInitializer {
                 System.nanoTime(), new int[1], new Stats());
         int agree = 0;
         int shadowMissing = 0;
-        int divergent = 0;
         for (Hit hit : hits) {
             ChunkPos chunk = new ChunkPos(hit.pos().getX() >> 4, hit.pos().getZ() >> 4);
             var shadow = ShadowScan.scanBlocking(level, chunk);
@@ -278,7 +196,6 @@ public class LocateMore implements ModInitializer {
                 shadowMissing++;
             }
         }
-        divergent = 0;
         final String line = "Shadow verify " + printable + ": " + agree + " agree, "
                 + shadowMissing + " unflushed-or-DRIFT of " + hits.size()
                 + " (run right after a save; nonzero after /save-all means parser drift)";
@@ -314,68 +231,9 @@ public class LocateMore implements ModInitializer {
     }
 
     /** One confirmed structure, in the order it was found (= distance order in smart mode). */
-    record Hit(BlockPos pos, Holder<Structure> holder, long horizDistSqr) {
+    public record Hit(BlockPos pos, Holder<Structure> holder, long horizDistSqr) {
     }
 
-    private static int locateMany(CommandContext<CommandSourceStack> ctx, boolean vanillaLab) throws CommandSyntaxException {
-        ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
-                ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
-        int count = IntegerArgumentType.getInteger(ctx, "count");
-        CommandSourceStack source = ctx.getSource();
-        ServerLevel level = source.getLevel();
-        Registry<Structure> registry = level.registryAccess().lookupOrThrow(Registries.STRUCTURE);
-
-        String printable = result.unwrap().map(
-                key -> key.identifier().toString(),
-                tag -> "#" + tag.location());
-        HolderSet<Structure> holders = result.unwrap().map(
-                key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
-                registry::get
-        ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
-
-        BlockPos origin = BlockPos.containing(source.getPosition());
-        long startNanos = System.nanoTime();
-
-        List<Hit> hits;
-        int checked;
-        String mode;
-        String statsNote = "";
-        if (vanillaLab) {
-            int[] probes = new int[1];
-            hits = probeVanilla(level, holders, origin, count, startNanos, probes);
-            checked = probes[0];
-            mode = "vanilla probes";
-        } else {
-            int[] candidates = new int[1];
-            Stats stats = new Stats();
-            hits = smartLocate(level, holders, origin, count, startNanos, candidates, stats);
-            checked = candidates[0];
-            mode = "candidates checked";
-            // Outcome buckets make the cost mix a measurement instead of a caveat:
-            // cache/disk-present, rejected, chunk loads forced, loads that held a start.
-            statsNote = " [present=" + stats.present + " absent=" + stats.absent
-                    + " loads=" + stats.loads + " loadHits=" + stats.loadHits + "]";
-        }
-
-        long tookMs = (System.nanoTime() - startNanos) / 1_000_000L;
-        if (hits.isEmpty()) {
-            throw ERROR_STRUCTURE_NOT_FOUND.create(printable);
-        }
-
-        int shown = Math.min(count, hits.size());
-        final int checkedFinal = checked;
-        String note = shown < count ? " - only " + shown + " of " + count + " within range/budget" : "";
-        final String statsFinal = statsNote;
-        source.sendSuccess(() -> Component.literal(
-                shown + " nearest " + printable + " (" + checkedFinal + " " + mode + ", " + tookMs + " ms"
-                        + statsFinal + note + "):"), false);
-        for (int i = 0; i < shown; i++) {
-            Hit hit = hits.get(i);
-            final int number = i + 1;
-            source.sendSuccess(() -> hitLine(number, hit), false);
-        }
-        return shown;
-    }
 
     /**
      * Built from vanilla client lang keys only ("chat.coordinates"), so
@@ -406,7 +264,7 @@ public class LocateMore implements ModInitializer {
     // ------------------------------------------------------------------
 
     /** Verification outcome buckets, reported in the header for measurements. */
-    static final class Stats {
+    public static final class Stats {
         int present;
         int absent;
         int loads;
@@ -550,6 +408,17 @@ public class LocateMore implements ModInitializer {
         }
         Hit hit = hits.get(0);
         return Pair.of(hit.pos(), hit.holder());
+    }
+
+    /**
+     * Test-harness hook for the local lab mod: the sync engine with the
+     * generation-backed path (trustMath=false), so a differential run can
+     * compare the trusted engine against real generation.
+     */
+    public static List<Hit> labLocate(ServerLevel level, HolderSet<Structure> holders,
+            BlockPos origin, int count, int[] checkedOut, Stats stats) {
+        return smartLocate(level, holders, origin, count, System.nanoTime(), checkedOut, stats,
+                Integer.MAX_VALUE, new boolean[1], false);
     }
 
     private static List<Hit> smartLocate(ServerLevel level, HolderSet<Structure> holders,
@@ -711,51 +580,5 @@ public class LocateMore implements ModInitializer {
     // Lab mode: unmodified vanilla nearest-searches from a probe grid.
     // ------------------------------------------------------------------
 
-    private static List<Hit> probeVanilla(ServerLevel level, HolderSet<Structure> holders,
-            BlockPos origin, int count, long startNanos, int[] probesOut) {
-        ChunkGenerator generator = level.getChunkSource().getGenerator();
-        Map<BlockPos, Holder<Structure>> found = new LinkedHashMap<>();
-        outer:
-        for (int ring = 0; ring <= PROBE_MAX_RING; ring++) {
-            for (BlockPos probe : ringProbes(origin, ring)) {
-                probesOut[0]++;
-                Pair<BlockPos, Holder<Structure>> hit;
-                VANILLA_BYPASS.set(true);
-                try {
-                    hit = generator.findNearestMapStructure(
-                            level, holders, probe, VANILLA_RADIUS_CHUNKS, false);
-                } finally {
-                    VANILLA_BYPASS.set(false);
-                }
-                if (hit != null) {
-                    found.putIfAbsent(hit.getFirst().immutable(), hit.getSecond());
-                }
-                long elapsedMs = (System.nanoTime() - startNanos) / 1_000_000L;
-                if (found.size() >= count || elapsedMs > PROBE_TIME_BUDGET_MS) {
-                    break outer;
-                }
-            }
-        }
-        List<Hit> hits = new ArrayList<>();
-        for (Map.Entry<BlockPos, Holder<Structure>> entry : found.entrySet()) {
-            hits.add(new Hit(entry.getKey(), entry.getValue(), horizDistSqr(entry.getKey(), origin)));
-        }
-        hits.sort(Comparator.comparingLong(Hit::horizDistSqr));
-        return hits;
-    }
 
-    private static List<BlockPos> ringProbes(BlockPos origin, int ring) {
-        if (ring == 0) {
-            return List.of(origin);
-        }
-        List<BlockPos> out = new ArrayList<>();
-        for (int dx = -ring; dx <= ring; dx++) {
-            for (int dz = -ring; dz <= ring; dz++) {
-                if (Math.max(Math.abs(dx), Math.abs(dz)) == ring) {
-                    out.add(origin.offset(dx * PROBE_STEP, 0, dz * PROBE_STEP));
-                }
-            }
-        }
-        return out;
-    }
 }

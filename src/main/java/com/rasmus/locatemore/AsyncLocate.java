@@ -2,7 +2,6 @@ package com.rasmus.locatemore;
 
 import com.mojang.datafixers.DataFixer;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
-import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -10,7 +9,6 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
 import java.util.PriorityQueue;
 import java.util.Set;
 import java.util.UUID;
@@ -30,22 +28,13 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
 import net.minecraft.core.RegistryAccess;
-import net.minecraft.core.registries.Registries;
-import net.minecraft.nbt.CompoundTag;
-import net.minecraft.nbt.IntTag;
-import net.minecraft.nbt.NbtUtils;
-import net.minecraft.nbt.Tag;
 import net.minecraft.nbt.visitors.CollectFields;
-import net.minecraft.nbt.visitors.FieldSelector;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ChunkMap;
 import net.minecraft.server.level.ServerBossEvent;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.util.datafix.DataFixTypes;
 import net.minecraft.world.BossEvent;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.Level;
@@ -56,7 +45,6 @@ import net.minecraft.world.level.chunk.ChunkGenerator;
 import net.minecraft.world.level.chunk.ChunkGeneratorStructureState;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 import net.minecraft.world.level.chunk.storage.ChunkScanAccess;
-import net.minecraft.world.level.chunk.storage.SimpleRegionStorage;
 import net.minecraft.world.level.levelgen.RandomState;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import net.minecraft.world.phys.Vec3;
@@ -347,11 +335,6 @@ public final class AsyncLocate {
         return possible;
     }
 
-    /** Admin-facing invalidation for the cache no fingerprint can see into. */
-    static void clearMathMemo() {
-        MATH_MEMO.clear();
-        MATH_MEMO_SIZE.set(0);
-    }
 
     private static synchronized ExecutorService workerExecutor() {
         if (worker == null || worker.isShutdown()) {
@@ -383,6 +366,26 @@ public final class AsyncLocate {
             this.task = task;
             this.candidate = candidate;
             this.knownAbsent = knownAbsent;
+        }
+    }
+
+    /** Once per structure per session, loud enough that a bug report carries it. */
+    private static final java.util.Set<String> REFEREE_WARNED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void warnRefereeMiss(ServerLevel level, PendingLoad pending) {
+        StringBuilder which = new StringBuilder();
+        for (Holder<Structure> holder : pending.candidate.holders()) {
+            if (which.length() > 0) {
+                which.append(',');
+            }
+            which.append(holder.unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
+        }
+        if (REFEREE_WARNED.add(which.toString())) {
+            LOGGER.warn("Math referee disagreement: predicted {} at chunk {} in {} (seed {}), but generation "
+                            + "produced no start. Results stay correct (the load was the authority), but please "
+                            + "report this line: it means a vanilla behavior this mod replicates has drifted.",
+                    which, pending.candidate.pos(), level.dimension().identifier(),
+                    level.getChunkSource().getGeneratorState().getLevelSeed());
         }
     }
 
@@ -457,6 +460,8 @@ public final class AsyncLocate {
                                 pending.task.mathLoads++;
                                 if (found != null) {
                                     pending.task.mathHits++;
+                                } else {
+                                    warnRefereeMiss(level, pending);
                                 }
                             }
                             pending.result.complete(found);
@@ -831,9 +836,10 @@ public final class AsyncLocate {
                             if (!(failure instanceof java.util.concurrent.TimeoutException)) {
                                 LOGGER.warn("Failed to read chunk {}", pos, failure);
                             }
-                            onDisk = SCAN_FAILED;
+                            onDisk = ShadowScan.SCAN_FAILED;
                         } else {
-                            onDisk = parseStarts(pos, collector);
+                            onDisk = ShadowScan.parse(collector, pos, dimension,
+                                    generator.getTypeNameForDataFixer(), fixer, registryAccess);
                         }
                         return new ShadowDone(decide(candidate, onDisk, scratch), scratch);
                     }, mathPool());
@@ -843,7 +849,7 @@ public final class AsyncLocate {
         private Shadow decide(LocateMore.Candidate candidate, Object2IntMap<Structure> onDisk,
                 LocateMore.Stats scratch) {
             ChunkPos pos = candidate.pos();
-            if (onDisk == SCAN_FAILED) {
+            if (onDisk == ShadowScan.SCAN_FAILED) {
                 return NEEDS_LOAD_SCAN_FAILED;
             }
             for (Holder<Structure> holder : candidate.holders()) {
@@ -887,14 +893,6 @@ public final class AsyncLocate {
             return ABSENT;
         }
 
-        private static final Object2IntMap<Structure> SCAN_FAILED =
-                it.unimi.dsi.fastutil.objects.Object2IntMaps.unmodifiable(new Object2IntOpenHashMap<>());
-
-        private Object2IntMap<Structure> parseStarts(ChunkPos pos, CollectFields collector) {
-            Object2IntMap<Structure> parsed = ShadowScan.parse(collector, pos, dimension,
-                    generator.getTypeNameForDataFixer(), fixer, registryAccess);
-            return parsed == ShadowScan.SCAN_FAILED ? SCAN_FAILED : parsed;
-        }
 
 
         private boolean structureCanStart(Structure structure, ChunkPos pos, LocateMore.Stats scratch) {
@@ -982,21 +980,27 @@ public final class AsyncLocate {
                             + LocateMore.maxDistBlocks() + " blocks."));
                     return;
                 }
-                String baseNote = hits.size() < count ? " - only " + hits.size() + " of " + count + " within range/budget" : "";
-                final String note = unresolved > 0
-                        ? baseNote + " - " + unresolved + " candidates unresolved; ordering not guaranteed"
-                        : baseNote;
-                String probeNote = chunksGenerated > 0
-                        ? " - generated " + chunksGenerated + " probe chunks" : "";
-                String mathNote = (mathLoads > 0 ? " math=" + mathHits + "/" + mathLoads : "")
-                        + (stats.mathSkips > 0 ? " mathSkips=" + stats.mathSkips : "");
-                source.sendSuccess(() -> Component.literal(
-                        hits.size() + " nearest " + printable + " (" + tookMs + " ms async"
-                                + " [present=" + stats.present + " absent=" + stats.absent
-                                + " loads=" + stats.loads + " loadHits=" + stats.loadHits
-                                + " regionSkips=" + stats.regionSkips
-                                + " memoHits=" + stats.memoHits + "]"
-                                + mathNote + note + probeNote + ")").withStyle(ChatFormatting.GRAY), false);
+                // A clean search earns a quiet line; the counters only appear when
+                // they explain something (chunk work, partial results, or a
+                // referee disagreement).
+                boolean interesting = stats.loads > 0 || unresolved > 0 || hits.size() < count
+                        || mathHits < mathLoads;
+                String detail = "";
+                if (interesting) {
+                    String baseNote = hits.size() < count
+                            ? " - only " + hits.size() + " of " + count + " within range/budget" : "";
+                    String note = unresolved > 0
+                            ? baseNote + " - " + unresolved + " candidates unresolved; ordering not guaranteed"
+                            : baseNote;
+                    String probeNote = chunksGenerated > 0
+                            ? " - generated " + chunksGenerated + " probe chunks" : "";
+                    String mathNote = mathLoads > 0 ? " math=" + mathHits + "/" + mathLoads : "";
+                    detail = " [loads=" + stats.loads + " loadHits=" + stats.loadHits
+                            + " memoHits=" + stats.memoHits + "]" + mathNote + note + probeNote;
+                }
+                final String line = hits.size() + " nearest " + printable
+                        + " (" + tookMs + " ms" + detail + ")";
+                source.sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.GRAY), false);
             });
         }
 
