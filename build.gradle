@@ -43,3 +43,28 @@ java {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
 }
+
+// Fails the build if development-only surface leaks into the shipped jar.
+tasks.register('verifyJar') {
+    dependsOn 'assemble'
+    doLast {
+        def jarFile = file("build/libs/locatemore-${project.version}.jar")
+        def forbidden = ['probeVanilla', 'enableBenchmarkModes', 'apiSmokeTest', 'locatemorelab',
+                         'StructureCheckAccessor', 'ServerLevelStructureAccessor']
+        def hits = []
+        new java.util.zip.ZipFile(jarFile).withCloseable { zip ->
+            zip.entries().each { entry ->
+                if (entry.name.endsWith('.class')) {
+                    def data = zip.getInputStream(entry).bytes
+                    forbidden.each { lit ->
+                        if (new String(data, 'ISO-8859-1').contains(lit)) hits << (entry.name + ': ' + lit)
+                    }
+                }
+            }
+        }
+        if (!hits.isEmpty()) {
+            throw new GradleException('Dev surface leaked into the shipped jar: ' + hits)
+        }
+    }
+}
+tasks.check.dependsOn 'verifyJar'

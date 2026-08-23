@@ -1,0 +1,451 @@
+[11:22:15] [main/INFO] (FabricLoader/GameProvider) Loading Minecraft 26.1.2 with Fabric Loader 0.19.3
+[11:22:15] [main/INFO] (FabricLoader/Mappings) Mappings not present!
+[11:22:15] [main/INFO] (FabricLoader) Loading 44 mods:
+	- fabric-api 0.155.2+26.1.2
+	   |-- fabric-key-mapping-api-v1 2.0.4+e2bdee784c
+	   |-- fabric-model-loading-api-v1 8.0.11+c80601bb4c
+	   |-- fabric-renderer-api-v1 13.0.8+c80601bb4c
+	   |-- fabric-renderer-indigo 8.1.5+1403e82c4c
+	   |-- fabric-rendering-v1 23.3.1+e9207d814c
+	   |-- fabric-screen-api-v1 5.1.0+981dd9b24c
+	   \-- fabric-sound-api-v1 2.0.4+11a26f314c
+	- fabric-api-base 2.0.3+ece063234c
+	- fabric-api-lookup-api-v1 2.0.12+d5a053b64c
+	- fabric-biome-api-v1 18.0.5+2fa62b4e4c
+	- fabric-block-api-v1 3.0.2+ec56b6014c
+	- fabric-block-getter-api-v2 2.0.6+ec56b6014c
+	- fabric-command-api-v2 3.0.5+e2bdee784c
+	- fabric-content-registries-v0 11.3.0+0082c9664c
+	- fabric-convention-tags-v2 4.6.2+4f11f7994c
+	- fabric-crash-report-info-v1 1.0.3+9f78a5a84c
+	- fabric-creative-tab-api-v1 5.0.11+d871b99e4c
+	- fabric-data-attachment-api-v1 2.2.9+44a0bd1d4c
+	- fabric-data-generation-api-v1 24.3.3+cda368334c
+	- fabric-debug-api-v1 1.0.1+c792624d4c
+	- fabric-dimensions-v1 5.1.7+ad343a8d4c
+	- fabric-entity-events-v1 5.0.2+e2bdee784c
+	- fabric-events-interaction-v0 5.2.2+07b380be4c
+	- fabric-game-rule-api-v1 4.0.5+d871b99e4c
+	- fabric-gametest-api-v1 4.0.17+867b87624c
+	- fabric-item-api-v1 14.3.0+6d1aaa724c
+	- fabric-lifecycle-events-v1 4.1.1+df84eb3d4c
+	- fabric-loot-api-v3 3.0.12+00a1fba64c
+	- fabric-menu-api-v1 2.0.14+d871b99e4c
+	- fabric-message-api-v1 7.0.5+dae8ce3e4c
+	- fabric-networking-api-v1 6.3.1+554860db4c
+	- fabric-object-builder-api-v1 23.1.0+abb459f14c
+	- fabric-particles-v1 5.0.15+b61fef434c
+	- fabric-permission-api-v1 1.0.2+7437387b4c
+	- fabric-recipe-api-v1 9.0.16+be4b75ae4c
+	- fabric-registry-sync-v0 7.1.0+2fa62b4e4c
+	- fabric-rendering-fluids-v1 6.0.1+d871b99e4c
+	- fabric-resource-conditions-api-v1 6.1.0+83dd0ba34c
+	- fabric-resource-loader-v0 3.3.17+4fc5413f4c
+	- fabric-resource-loader-v1 2.0.10+7c44c7324c
+	- fabric-serialization-api-v1 2.0.3+11a26f314c
+	- fabric-tag-api-v1 2.1.1+371cf5db4c
+	- fabric-transfer-api-v1 8.0.6+357ea7334c
+	- fabric-transitive-access-wideners-v1 8.1.3+3ff549fb4c
+	- fabricloader 0.19.3
+	- java 25
+	- locatemore 1.6.0
+	- locatemorelab 1.0.0
+	- minecraft 26.1.2
+	- mixinextras 0.5.4
+[11:22:15] [main/INFO] (FabricLoader/Mixin) SpongePowered MIXIN Subsystem Version=0.8.7 Source=file:/C:/Users/Rasmus/.gradle/caches/modules-2/files-2.1/net.fabricmc/sponge-mixin/0.17.3+mixin.0.8.7/41c4a3984a80f4679e759fb9f495587acc5cdac7/sponge-mixin-0.17.3+mixin.0.8.7.jar Service=Knot/Fabric Env=SERVER
+[11:22:15] [main/INFO] (FabricLoader/Mixin) Compatibility level set to JAVA_25
+[11:22:15] [main/WARN] (FabricLoader/Mixin) Reference map 'locatemore.refmap.json' for locatemore.mixins.json could not be read. If this is a development environment you can ignore this message
+[11:22:16] [main/INFO] (FabricLoader/MixinExtras|Service) Initializing MixinExtras via com.llamalad7.mixinextras.service.MixinExtrasServiceImpl(version=0.5.4).
+[11:22:23] [main/INFO] (Minecraft) Environment: Environment[sessionHost=https://sessionserver.mojang.com, servicesHost=https://api.minecraftservices.com, profilesHost=https://api.mojang.com, name=PROD]
+[11:22:23] [Worker-Main-19/INFO] (Minecraft) No existing world data, creating new world
+[11:22:24] [main/INFO] (Minecraft) Loaded 1515 recipes
+[11:22:24] [main/INFO] (Minecraft) Loaded 1617 advancements
+[11:22:24] [main/INFO] (BiomeModificationImpl) Applied 0 biome modifications to 0 of 65 new biomes in 1.616 ms
+[11:22:24] [Server thread/INFO] (Minecraft) Starting minecraft server version 26.1.2
+[11:22:24] [Server thread/INFO] (Minecraft) Loading properties
+[11:22:24] [Server thread/INFO] (Minecraft) Default game type: SURVIVAL
+[11:22:24] [Server thread/INFO] (Minecraft) Generating keypair
+[11:22:24] [Server thread/INFO] (Minecraft) Starting Minecraft server on *:25565
+[11:22:24] [Server thread/WARN] (Minecraft) **** SERVER IS RUNNING IN OFFLINE/INSECURE MODE!
+[11:22:24] [Server thread/WARN] (Minecraft) The server will make no attempt to authenticate usernames. Beware.
+[11:22:24] [Server thread/WARN] (Minecraft) While this makes the game possible to play without internet access, it also opens up the ability for hackers to connect with any username they choose.
+[11:22:24] [Server thread/WARN] (Minecraft) To change this, set "online-mode" to "true" in the server.properties file.
+[11:22:24] [Server thread/INFO] (Minecraft) Preparing level "world"
+[11:22:25] [Server thread/INFO] (Minecraft) Selecting global world spawn...
+[11:22:27] [Server thread/INFO] (Minecraft) Loading 0 persistent chunks...
+[11:22:27] [Server thread/INFO] (Minecraft) Preparing spawn area: 100%
+[11:22:27] [Server thread/INFO] (Minecraft) Time elapsed: 2284 ms
+[11:22:27] [Server thread/INFO] (Minecraft) Done (2.585s)! For help, type "help"
+[11:22:27] [Server thread/INFO] (Minecraft) Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
+[11:22:27] [Server thread/INFO] (Minecraft) Saving chunks for level 'ServerLevel[world]'/minecraft:the_end
+[11:22:27] [Server thread/INFO] (Minecraft) Saving chunks for level 'ServerLevel[world]'/minecraft:the_nether
+[11:22:27] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage (world): All chunks are saved
+[11:22:27] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[11:22:27] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[11:22:27] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage: All dimensions are saved
+[11:23:27] [Server thread/INFO] (Minecraft) Searching for the 5 nearest minecraft:mansion…
+[11:23:27] [Server thread/INFO] (Minecraft) 1. [-1872, ~, -528] (1945 blocks away)
+[11:23:27] [Server thread/INFO] (Minecraft) 2. [2944, ~, 3296] (4419 blocks away)
+[11:23:27] [Server thread/INFO] (Minecraft) 3. [1824, ~, -5840] (6118 blocks away)
+[11:23:27] [Server thread/INFO] (Minecraft) 4. [-3488, ~, 6848] (7685 blocks away)
+[11:23:28] [Server thread/INFO] (Minecraft) 5. [9616, ~, 4528] (10628 blocks away)
+[11:23:28] [Server thread/INFO] (Minecraft) 5 nearest minecraft:mansion (565 ms)
+[11:23:32] [Server thread/INFO] (Minecraft) Searching for the 5 nearest minecraft:ancient_city…
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [4, -33]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [14, 32]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [30, -39]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [-44, -23]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [50, -15]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [-39, -36]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [2, 54]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [LocateMore-Worker-2/WARN] (locatemore-async) Shadow verification failed at [-47, 33]
+
+java.util.concurrent.CompletionException: java.util.ConcurrentModificationException
+	at java.base/java.util.concurrent.CompletableFuture.wrapInCompletionException(CompletableFuture.java:323)
+	at java.base/java.util.concurrent.CompletableFuture.encodeThrowable(CompletableFuture.java:359)
+	at java.base/java.util.concurrent.CompletableFuture.completeThrowable(CompletableFuture.java:364)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1791)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1090)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:614)
+	at java.base/java.lang.Thread.run(Thread.java:1474)
+Caused by: java.util.ConcurrentModificationException
+	at java.base/java.util.HashMap.computeIfAbsent(HashMap.java:1230)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.blocks(StructureTemplate.java:855)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate$Palette.jigsaws(StructureTemplate.java:843)
+	at knot//net.minecraft.world.level.levelgen.structure.templatesystem.StructureTemplate.getJigsaws(StructureTemplate.java:201)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.SinglePoolElement.getShuffledJigsawBlocks(SinglePoolElement.java:119)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.getRandomNamedJigsaw(JigsawPlacement.java:356)
+	at knot//net.minecraft.world.level.levelgen.structure.pools.JigsawPlacement.addPieces(JigsawPlacement.java:286)
+	at knot//net.minecraft.world.level.levelgen.structure.structures.JigsawStructure.findGenerationPoint(JigsawStructure.java:105)
+	at knot//net.minecraft.world.level.levelgen.structure.Structure.findValidGenerationPoint(Structure.java:254)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.structureCanStart(AsyncLocate.java:908)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.decide(AsyncLocate.java:874)
+	at knot//com.rasmus.locatemore.AsyncLocate$Task.lambda$dispatchShadow$0(AsyncLocate.java:825)
+	at java.base/java.util.concurrent.CompletableFuture$AsyncSupply.run(CompletableFuture.java:1789)
+	... 3 more
+[11:23:32] [Server thread/INFO] (Minecraft) 1. [-1360, ~, -368] (1408 blocks away)
+[11:23:32] [Server thread/INFO] (Minecraft) 2. [-1520, ~, -1136] (1897 blocks away)
+[11:23:32] [Server thread/INFO] (Minecraft) 3. [-2128, ~, -928] (2321 blocks away)
+[11:23:32] [Server thread/INFO] (Minecraft) 4. [192, ~, 2400] (2407 blocks away)
+[11:23:32] [Server thread/INFO] (Minecraft) 5. [-592, ~, 2400] (2471 blocks away)
+[11:23:32] [Server thread/INFO] (Minecraft) 5 nearest minecraft:ancient_city (53 ms [loads=0 loadHits=0 memoHits=0] - 8 candidates unresolved; ordering not guaranteed)
+[11:23:37] [Server thread/INFO] (Minecraft) Searching for the 5 nearest minecraft:monument…
+[11:23:37] [Server thread/INFO] (Minecraft) 1. [-1312, ~, 272] (1339 blocks away)
+[11:23:37] [Server thread/INFO] (Minecraft) 2. [-1232, ~, 720] (1426 blocks away)
+[11:23:38] [Server thread/INFO] (Minecraft) 3. [2224, ~, -1376] (2615 blocks away)
+[11:23:38] [Server thread/INFO] (Minecraft) 4. [1728, ~, -1968] (2618 blocks away)
+[11:23:38] [Server thread/INFO] (Minecraft) 5. [848, ~, -2528] (2666 blocks away)
+[11:23:38] [Server thread/INFO] (Minecraft) 5 nearest minecraft:monument (568 ms)
+[11:23:42] [Server thread/INFO] (Minecraft) Searching for the 5 nearest minecraft:pillager_outpost…
+[11:23:42] [Server thread/INFO] (Minecraft) 1. [-736, ~, 2736] (2833 blocks away)
+[11:23:42] [Server thread/INFO] (Minecraft) 2. [272, ~, -2944] (2956 blocks away)
+[11:23:42] [Server thread/INFO] (Minecraft) 3. [-2032, ~, 2272] (3048 blocks away)
+[11:23:42] [Server thread/INFO] (Minecraft) 4. [-1520, ~, 2816] (3200 blocks away)
+[11:23:42] [Server thread/INFO] (Minecraft) 5. [-3344, ~, -160] (3347 blocks away)
+[11:23:42] [Server thread/INFO] (Minecraft) 5 nearest minecraft:pillager_outpost (25 ms)
+[11:23:47] [Server thread/INFO] (Minecraft) Searching for the 5 nearest #minecraft:village…
+[11:23:47] [Server thread/INFO] (Minecraft) 1. [32, ~, 16] (35 blocks away)
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [17, 73]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [52, 23]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-51, 1]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-30, 41]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [71, 14]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [79, 34]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-27, -86]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [93, -18]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-51, 78]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [111, 45]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-102, -25]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [12, 108]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [20, -122]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-52, 119]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-14, -123]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-55, -112]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-98, -100]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [122, -53]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [8, -156]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-24, 147]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-14, -157]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-135, -80]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [40, 156]; a candidate was dropped
+[11:23:48] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-118, -120]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-63, -170]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [174, 18]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-52, -182]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [22, 172]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [160, 112]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-67, 176]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-168, 81]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [77, 186]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [157, 149]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [205, 4]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-202, 43]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [188, 107]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-21, -217]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-230, -28]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-161, 157]; a candidate was dropped
+[11:23:49] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-223, -52]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-65, 227]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [118, 205]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [215, -88]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [207, 105]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [194, -157]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [247, -58]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-92, -226]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-251, 36]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [226, -132]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-248, 75]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [208, -158]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-224, -121]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-28, -262]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-269, -47]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [122, -232]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-122, 241]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-56, -268]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-261, -97]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [210, -182]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-222, 160]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [118, 257]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-238, -146]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [148, -237]; a candidate was dropped
+[11:23:50] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-43, 278]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-258, 142]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-56, -284]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [117, -260]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-262, 119]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-292, 48]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-262, -165]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-160, -260]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [184, -235]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-100, 297]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-50, 309]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-201, -235]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [313, 15]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [161, -272]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [176, -266]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-315, -60]; a candidate was dropped
+[11:23:51] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-318, -29]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [170, -288]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-259, -198]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-296, -128]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-204, 259]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [121, 315]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-326, -80]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-334, 54]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-329, 78]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [137, 313]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-320, -147]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-97, -332]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [331, -119]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-294, -196]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [-336, 115]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [241, 259]; a candidate was dropped
+[11:23:52] [Server thread/WARN] (locatemore-async) Chunk resolution failed twice at [153, -318]; a candidate was dropped
+[11:23:52] [Server thread/INFO] (Minecraft) Previous search superseded.
+[11:23:52] [Server thread/INFO] (Minecraft) Searching for the 5 nearest minecraft:fortress…
+[11:23:52] [Server thread/WARN] (locatemore-async) Math referee disagreement: predicted minecraft:fortress at chunk [6, -7] in minecraft:the_nether (seed 20260821), but generation produced no start. Results stay correct (the load was the authority), but please report this line: it means a vanilla behavior this mod replicates has drifted.
+[11:23:53] [Server thread/INFO] (Minecraft) 1. [208, ~, 352] (408 blocks away)
+[11:23:53] [Server thread/INFO] (Minecraft) 2. [464, ~, -160] (490 blocks away)
+[11:23:53] [Server thread/INFO] (Minecraft) 3. [-688, ~, 80] (692 blocks away)
+[11:23:53] [Server thread/INFO] (Minecraft) 4. [-416, ~, -560] (697 blocks away)
+[11:23:53] [Server thread/INFO] (Minecraft) 5. [-96, ~, 752] (758 blocks away)
+[11:23:53] [Server thread/INFO] (Minecraft) 5 nearest minecraft:fortress (310 ms [loads=17 loadHits=5 memoHits=0] math=5/10 - generated 10 probe chunks)
+[11:23:57] [Server thread/INFO] (Minecraft) Searching for the 3 nearest minecraft:buried_treasure…
+[11:23:57] [Server thread/INFO] (Minecraft) 1. [-151, ~, 89] (175 blocks away)
+[11:23:58] [Server thread/INFO] (Minecraft) 2. [-279, ~, 25] (280 blocks away)
+[11:23:58] [Server thread/INFO] (Minecraft) 3. [-199, ~, -295] (355 blocks away)
+[11:23:58] [Server thread/INFO] (Minecraft) 3 nearest minecraft:buried_treasure (473 ms)
+[11:24:05] [Server thread/INFO] (Minecraft) 5 nearest minecraft:mansion (214 candidates checked, 3051 ms):
+[11:24:05] [Server thread/INFO] (Minecraft) 1. [-1872, ~, -528] (1945 blocks away)
+[11:24:05] [Server thread/INFO] (Minecraft) 2. [2944, ~, 3296] (4419 blocks away)
+[11:24:05] [Server thread/INFO] (Minecraft) 3. [1824, ~, -5840] (6118 blocks away)
+[11:24:05] [Server thread/INFO] (Minecraft) 4. [-3488, ~, 6848] (7685 blocks away)
+[11:24:05] [Server thread/INFO] (Minecraft) 5. [9616, ~, 4528] (10628 blocks away)
+[11:24:05] [Server thread/WARN] (Minecraft) Can't keep up! Is the server overloaded? Running 3010ms or 60 ticks behind
+[11:24:08] [Server thread/INFO] (Minecraft) 5 nearest minecraft:pillager_outpost (14 candidates checked, 609 ms):
+[11:24:08] [Server thread/INFO] (Minecraft) 1. [-736, ~, 2736] (2833 blocks away)
+[11:24:08] [Server thread/INFO] (Minecraft) 2. [272, ~, -2944] (2956 blocks away)
+[11:24:08] [Server thread/INFO] (Minecraft) 3. [-2032, ~, 2272] (3048 blocks away)
+[11:24:08] [Server thread/INFO] (Minecraft) 4. [-1520, ~, 2816] (3200 blocks away)
+[11:24:08] [Server thread/INFO] (Minecraft) 5. [-3344, ~, -160] (3347 blocks away)
+[11:24:23] [Server thread/INFO] (Minecraft) Shadow verify minecraft:mansion: 5 agree, 15 unflushed-or-DRIFT of 20 (run right after a save; nonzero after /save-all means parser drift)
+[11:24:23] [Server thread/WARN] (Minecraft) Can't keep up! Is the server overloaded? Running 2255ms or 45 ticks behind
+[11:25:02] [Server thread/INFO] (Minecraft) Stopping the server
+[11:25:03] [Server thread/INFO] (Minecraft) Stopping server
+[11:25:03] [Server thread/INFO] (Minecraft) Saving players
+[11:25:03] [Server thread/INFO] (Minecraft) Saving worlds
+[11:25:03] [Server thread/INFO] (Minecraft) Saving chunks for level 'ServerLevel[world]'/minecraft:overworld
+[11:25:03] [Server thread/INFO] (Minecraft) Saving chunks for level 'ServerLevel[world]'/minecraft:the_end
+[11:25:03] [Server thread/INFO] (Minecraft) Saving chunks for level 'ServerLevel[world]'/minecraft:the_nether
+[11:25:03] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage (world): All chunks are saved
+[11:25:03] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage (DIM1): All chunks are saved
+[11:25:03] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage (DIM-1): All chunks are saved
+[11:25:03] [Server thread/INFO] (Minecraft) ThreadedAnvilChunkStorage: All dimensions are saved
