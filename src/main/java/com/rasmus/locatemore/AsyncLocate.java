@@ -1161,6 +1161,13 @@ public final class AsyncLocate {
 
         private void finish(List<LocateMore.Hit> hits, long startNanos, Throwable error) {
             long tookMs = (System.nanoTime() - startNanos) / 1_000_000L;
+            if (stats.drawSeen > 0) {
+                // The standing sample is invisible in a quiet chat summary
+                // (full agreement is deliberately not "interesting"), so the
+                // evidence lands in the log where the operator collects it.
+                LOGGER.info("On-disk draw sample: {}/{} predictions matched already-generated chunks ({}).",
+                        stats.drawSeenHits, stats.drawSeen, printable);
+            }
             server.execute(() -> {
                 removeBossBar();
                 if (apiSink != null) {
