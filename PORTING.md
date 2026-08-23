@@ -33,6 +33,15 @@ Boots the dev server on seed 20260821, runs the battery in `test/commands.txt`
 and the parse tripwire), and diffs the coordinates against
 `test/golden/<mc-version>.txt`. Empty diff = ship.
 
+The run tests the version in gradle.properties. The jar supports two, so
+every release must run the harness for BOTH: make a worktree, flip
+minecraft_version and fabric_version in its gradle.properties, and run the
+harness there (the goldens are per-version files, so both can be blessed
+and diffed independently). When the two goldens are identical, worldgen
+did not move between the versions and the dual-version claim is proven
+rather than assumed; when they differ, each version's golden records its
+own truth.
+
 ## 4. When the diff is not empty
 
 Check two of the moved coordinates by hand against an UNMODIFIED vanilla
