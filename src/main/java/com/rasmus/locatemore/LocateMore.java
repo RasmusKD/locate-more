@@ -735,54 +735,29 @@ public class LocateMore implements ModInitializer {
                     continue;
                 }
                 checkedOut[0]++;
-                // INVARIANT: this shortcut may only ever be PERMISSIVE. Under
-                // skipKnown the decision is always vanilla's (the filter and
-                // canBeReferenced evaluate per candidate); a too-restrictive
-                // shortcut here would skip a valid nearer candidate and break
-                // exactness. Math-absent still prunes for free either way.
+                // Under skipKnown the decision is always vanilla's (the
+                // filter and canBeReferenced evaluate per candidate), so the
+                // trust shortcut only applies to the pure search. The shared
+                // absent-region verdict (TrustVerdict) carries the permissive
+                // invariant; LOAD_REQUIRED (distrusted or oversized sets)
+                // falls to vanilla's own verify, exactly as before - which
+                // also keeps vanilla's StructureCheck scan away from
+                // ungenerated regions on the trusted paths, where it would
+                // create empty files.
                 Holder<net.minecraft.world.level.levelgen.structure.StructureSet> trustSetHolder =
                         trustSets == null ? null : trustSets.get(candidate.placement());
-                net.minecraft.world.level.levelgen.structure.StructureSet trustSet =
-                        trustSetHolder == null ? null : trustSetHolder.value();
-                if (trustCatalog != null && !skipKnown && trustSet != null
-                        && (trustSet.structures().size() == 1
-                                || SetDraw.trusted(trustSetHolder.unwrapKey().orElse(null),
-                                        trustSet.structures().size()))
+                if (trustCatalog != null && !skipKnown && trustSetHolder != null
                         && !trustCatalog.mayHoldChunks(candidate.pos())) {
-                    // Region-absent candidate: generation would run exactly
-                    // this math (findValidGenerationPoint per member, in draw
-                    // order), so the first member that validates is the chunk's
-                    // winner and the verdict is the answer. For one-member sets
-                    // this degenerates to the original single-set shortcut; for
-                    // multi-member sets the draw replication carries it (427/427
-                    // referee-confirmed before trust shipped). This also keeps
-                    // vanilla's StructureCheck scan away from ungenerated
-                    // regions, where it would create empty files.
-                    found = null;
-                    Holder<Structure> winner = SetDraw.winner(seed, candidate.pos(), trustSet,
-                            member -> AsyncLocate.mathCanStart(level, member.value(), candidate.pos()));
-                    boolean requested = false;
-                    if (winner != null) {
-                        for (Holder<Structure> holder : candidate.holders()) {
-                            if (holder.value() == winner.value()) {
-                                requested = true;
-                                break;
-                            }
-                        }
-                    }
-                    if (requested) {
-                        if (trustSet.structures().size() == 1) {
-                            stats.mathSkips++;
-                        } else {
-                            stats.drawSkips++;
-                        }
-                        found = new VerifyResult(candidate.placement().getLocatePos(candidate.pos()),
-                                winner, candidate.pos());
-                    } else {
-                        if (winner != null) {
-                            stats.drawSkips++;
-                        }
-                    }
+                    TrustVerdict.Verdict verdict = TrustVerdict.absentRegion(seed, candidate,
+                            trustSetHolder,
+                            (structure, chunk) -> AsyncLocate.mathCanStart(level, structure, chunk),
+                            stats);
+                    found = switch (verdict.kind()) {
+                        case HIT -> verdict.result();
+                        case ABSENT -> null;
+                        case LOAD_REQUIRED -> verify(candidate.holders(), level, structureManager,
+                                candidate.placement(), candidate.pos(), skipKnown, stats);
+                    };
                 } else {
                     found = verify(candidate.holders(), level, structureManager,
                             candidate.placement(), candidate.pos(), skipKnown, stats);

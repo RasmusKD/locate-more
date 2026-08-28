@@ -1091,7 +1091,9 @@ public final class AsyncLocate {
                     }, mathPool());
         }
 
-        /** Vanilla's exact per-structure decision order, given the scan outcome. */
+        /** Vanilla's exact per-structure decision order, given the scan
+         * outcome; the region-absent branch is TrustVerdict.absentRegion,
+         * shared with the sync engine. */
         private Shadow decide(LocateMore.Candidate candidate, Object2IntMap<Structure> onDisk,
                 LocateMore.Stats scratch) {
             ChunkPos pos = candidate.pos();
@@ -1100,78 +1102,32 @@ public final class AsyncLocate {
             }
             if (onDisk != null) {
                 sampleDrawOnDisk(candidate, onDisk, scratch);
-            }
-            for (Holder<Structure> holder : candidate.holders()) {
-                if (onDisk != null) {
-                    int references = onDisk.getOrDefault(holder.value(), -1);
-                    if (references == -1) {
-                        continue;
-                    }
-                    return new Shadow(new LocateMore.VerifyResult(
-                            candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
-                }
-                // Not on disk: vanilla's math path. isStructureChunk is
-                // vanilla's own composition (placement, then frequency, then
-                // exclusion zones - outposts refuse to spawn near village
-                // candidates); calling it instead of hand-composing the two
-                // internals keeps the filter on vanilla's intended entry
-                // point. Its isPlacementChunk leg is redundant-true here,
-                // because candidates come from getPotentialStructureChunk
-                // and getRingPositionsFor.
-                if (!candidate.placement().isStructureChunk(state, pos.x(), pos.z())) {
-                    continue;
-                }
-                if (structureCanStart(holder.value(), pos, scratch)) {
-                    var setHolder = setByPlacement.get(candidate.placement());
-                    net.minecraft.world.level.levelgen.structure.StructureSet set =
-                            setHolder == null ? null : setHolder.value();
-                    if (set != null && set.structures().size() == 1) {
-                        // Generation would run this exact math and nothing else
-                        // (Structure.generate calls the same
-                        // findValidGenerationPoint), so for a one-structure set
-                        // the verdict is the outcome; the math=X/Y referee in
-                        // the summary line measured 100% agreement across the
-                        // single-set battery before this shortcut shipped.
-                        // Multi-structure sets still load: the weighted draw is
-                        // generation's call to make.
-                        scratch.mathSkips++;
+                for (Holder<Structure> holder : candidate.holders()) {
+                    if (onDisk.getOrDefault(holder.value(), -1) != -1) {
                         return new Shadow(new LocateMore.VerifyResult(
                                 candidate.placement().getLocatePos(pos), holder, pos), false, false, null);
                     }
-                    if (set != null && SetDraw.trusted(
-                            setHolder.unwrapKey().orElse(null), set.structures().size())) {
-                        // Multi-member set, trust earned: the draw replicates
-                        // generation's weighted pick (427/427 referee-confirmed
-                        // across 7 seeds before this shipped), so the first
-                        // draw-ordered member whose generation point validates
-                        // IS the chunk's winner. A requested winner is the
-                        // verdict; any other winner means this chunk belongs to
-                        // a different structure. The verify command still loads
-                        // and compares, and any observed disagreement distrusts
-                        // the placement for the session.
-                        Holder<Structure> winner = SetDraw.winner(seed, pos, set,
-                                member -> structureCanStart(member.value(), pos, scratch));
-                        if (winner != null) {
-                            for (Holder<Structure> requested : candidate.holders()) {
-                                if (requested.value() == winner.value()) {
-                                    scratch.drawSkips++;
-                                    return new Shadow(new LocateMore.VerifyResult(
-                                            candidate.placement().getLocatePos(pos), requested, pos),
-                                            false, false, null);
-                                }
-                            }
-                            scratch.drawSkips++;
-                        }
-                        return ABSENT;
-                    }
-                    // Distrusted or oversized set: referee mode, predict and
-                    // let the load judge it (draw=hits/loads in the summary).
-                    Holder<Structure> predicted = set == null ? null : SetDraw.winner(seed, pos, set,
-                            member -> structureCanStart(member.value(), pos, scratch));
-                    return new Shadow(null, true, true, predicted);
                 }
+                return ABSENT;
             }
-            return ABSENT;
+            // Not on disk: vanilla's math path. isStructureChunk is vanilla's
+            // own composition (placement, then frequency, then exclusion
+            // zones - outposts refuse to spawn near village candidates);
+            // calling it instead of hand-composing the internals keeps the
+            // filter on vanilla's intended entry point. Its isPlacementChunk
+            // leg is redundant-true here, because candidates come from
+            // getPotentialStructureChunk and getRingPositionsFor.
+            if (!candidate.placement().isStructureChunk(state, pos.x(), pos.z())) {
+                return ABSENT;
+            }
+            TrustVerdict.Verdict verdict = TrustVerdict.absentRegion(seed, candidate,
+                    setByPlacement.get(candidate.placement()),
+                    (structure, chunk) -> structureCanStart(structure, chunk, scratch), scratch);
+            return switch (verdict.kind()) {
+                case HIT -> new Shadow(verdict.result(), false, false, null);
+                case ABSENT -> ABSENT;
+                case LOAD_REQUIRED -> new Shadow(null, true, true, verdict.predictedWinner());
+            };
         }
 
 
