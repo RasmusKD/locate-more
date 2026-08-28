@@ -189,3 +189,5 @@ because every line uses vanilla translation keys.
 ## Versions
 
 One jar runs on 26.1.2 and 26.2. Fabric, requires Fabric API. MIT license.
+Server-side: installed on a server, vanilla clients get everything; in
+singleplayer a client install works.
