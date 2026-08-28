@@ -688,32 +688,52 @@ public final class BiomeLocate {
             // reorders anything: acceptance, separation and streaming all
             // happen sequentially over ascending distances, exactly as the
             // single-threaded loop did - the pool only computes the samples.
-            PriorityQueue<Column> queue = new PriorityQueue<>(Comparator.comparingLong(Column::distSqr));
+            // Ring-batch sorted list instead of a heap (the POI-stream
+            // insight): rings arrive as batches, so appending them and
+            // stable-sorting the unconsumed tail once per batch beats
+            // per-element heap sift-downs - TimSort is near-linear on the
+            // mostly-sorted tail - and consumption is an index increment.
+            // Exactness: a column enters a batch only once every unpushed
+            // ring is provably farther than the batch's last element, and
+            // ties fall to ring insertion order (stable sort), documented
+            // and deterministic.
+            ArrayList<Column> frontier = new ArrayList<>();
+            int consumed = 0;
             int nextRing = 0;
             List<Hit> hits = new ArrayList<>();
             long columns = 0;
             List<Column> batch = new ArrayList<>(BATCH);
             List<java.util.concurrent.Callable<BlockPos[]>> samplers = new ArrayList<>(BATCH / 64 + 1);
+            Comparator<Column> byDist = Comparator.comparingLong(Column::distSqr);
 
             while (!aborted.get() && hits.size() < count) {
                 batch.clear();
                 samplers.clear();
-                while (batch.size() < BATCH) {
-                    long pushedBound = square((long) nextRing * HORIZ_STEP);
-                    // >= : at an exact tie the ring is pushed before the
-                    // column is pulled, same order as the pre-parallel loop,
-                    // so the blessed golden files stay comparable.
-                    if (queue.isEmpty() || (nextRing <= maxRing && queue.peek().distSqr() >= pushedBound)) {
-                        if (nextRing > maxRing) {
-                            break;
-                        }
-                        pushRing(nextRing++, queue);
-                        continue;
-                    }
-                    if (queue.peek().distSqr() > radiusSqr) {
+                if (consumed > (1 << 17)) {
+                    // Compact occasionally so a long sweep does not hold
+                    // every consumed column alive.
+                    frontier.subList(0, consumed).clear();
+                    consumed = 0;
+                }
+                while (frontier.size() - consumed < BATCH && nextRing <= maxRing) {
+                    pushRing(nextRing++, frontier);
+                }
+                frontier.subList(consumed, frontier.size()).sort(byDist);
+                int end = Math.min(consumed + BATCH, frontier.size());
+                while (nextRing <= maxRing && end > consumed
+                        && square((long) nextRing * HORIZ_STEP) <= frontier.get(end - 1).distSqr()) {
+                    pushRing(nextRing++, frontier);
+                    frontier.subList(consumed, frontier.size()).sort(byDist);
+                    end = Math.min(consumed + BATCH, frontier.size());
+                }
+                while (consumed < end) {
+                    Column column = frontier.get(consumed);
+                    if (column.distSqr() > radiusSqr) {
+                        consumed = frontier.size();
                         break;
                     }
-                    batch.add(queue.poll());
+                    batch.add(column);
+                    consumed++;
                 }
                 if (batch.isEmpty()) {
                     break;
@@ -911,9 +931,9 @@ public final class BiomeLocate {
             return null;
         }
 
-        private void pushRing(int ring, PriorityQueue<Column> queue) {
+        private void pushRing(int ring, List<Column> frontier) {
             if (ring == 0) {
-                queue.add(new Column(origin.getX(), origin.getZ(), 0L));
+                frontier.add(new Column(origin.getX(), origin.getZ(), 0L));
                 return;
             }
             for (int dx = -ring; dx <= ring; dx++) {
@@ -923,7 +943,7 @@ public final class BiomeLocate {
                     }
                     long ox = (long) dx * HORIZ_STEP;
                     long oz = (long) dz * HORIZ_STEP;
-                    queue.add(new Column(origin.getX() + (int) ox, origin.getZ() + (int) oz,
+                    frontier.add(new Column(origin.getX() + (int) ox, origin.getZ() + (int) oz,
                             ox * ox + oz * oz));
                 }
             }
