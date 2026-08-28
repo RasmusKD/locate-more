@@ -256,7 +256,18 @@ public final class BiomeLocate {
      * @param dim index into the five 2D dimensions (t, h, c, e, w)
      * @param intervals quantized, merged, sorted [min,max] pairs, flattened
      */
-    private record Prefilter(int dim, long[] intervals, long[] certified) {
+    private record Prefilter(int dim, long[] intervals, long[] certified, long[] certifiedDepth) {
+
+        /** Proved rejection of one y sample by its depth alone; see the
+         * depth note in buildPrefilter. */
+        boolean certifiedDepthRejects(long quantized) {
+            for (int i = 0; i < certifiedDepth.length; i += 2) {
+                if (quantized >= certifiedDepth[i] && quantized <= certifiedDepth[i + 1]) {
+                    return true;
+                }
+            }
+            return false;
+        }
 
         boolean rejects(long quantized) {
             for (int i = 0; i < intervals.length; i += 2) {
@@ -386,8 +397,8 @@ public final class BiomeLocate {
     private static long[] buildCertified(int dim, long[] union,
             List<long[]> nonTargetDim, long offTSquared, Climate.Sampler sampler) {
         // c'_j already folded into nonTargetDim rows by the caller.
-        long lo = quantize(flatFunctionOf(sampler, dim).minValue());
-        long hi = quantize(flatFunctionOf(sampler, dim).maxValue());
+        long lo = quantize(densityOf(sampler, dim).minValue());
+        long hi = quantize(densityOf(sampler, dim).maxValue());
         long cap = Math.max(1, hi - lo);
         long[][] rows = nonTargetDim.toArray(new long[0][]);
         List<long[]> out = new ArrayList<>();
@@ -425,6 +436,10 @@ public final class BiomeLocate {
             flat[i * 2 + 1] = out.get(i)[1];
         }
         return flat;
+    }
+
+    private static DensityFunction densityOf(Climate.Sampler sampler, int dim) {
+        return dim == 5 ? sampler.depth() : flatFunctionOf(sampler, dim);
     }
 
     private static DensityFunction flatFunctionOf(Climate.Sampler sampler, int dim) {
@@ -491,25 +506,47 @@ public final class BiomeLocate {
                 bestIntervals = flat;
             }
         }
-        if (best < 0) {
-            return null;
+        // Depth gets ONLY a certified tier - computed even when no flat
+        // dimension discriminates. The trusted-interval variant of a depth
+        // window is exactly what the river referee shot down (nearest-point
+        // wins just outside thin depth bands), so a y sample is skipped by
+        // depth only where the covering bound PROVES the target cannot win.
+        List<long[]> depthRaw = new ArrayList<>();
+        for (var pair : points) {
+            if (candidates.contains(pair.getSecond())) {
+                depthRaw.add(new long[]{pair.getFirst().depth().min(), pair.getFirst().depth().max()});
+            }
         }
-        // Certified tier: c'_j per non-target point over the five other
-        // dimensions (four flats + depth), bounded by the noise functions'
-        // own min/max, minus the smallest target offset squared.
+        long[] certifiedDepth = depthRaw.isEmpty() ? new long[0]
+                : certifiedForDim(5, mergeIntervals(depthRaw), points, candidates, sampler);
+        if (best < 0) {
+            return certifiedDepth.length == 0 ? null
+                    : new Prefilter(-1, new long[0], new long[0], certifiedDepth);
+        }
+        long[] certified = certifiedForDim(best, bestIntervals, points, candidates, sampler);
+        return new Prefilter(best, bestIntervals, certified, certifiedDepth);
+    }
+
+    /**
+     * Certified rejection intervals for one dimension: c'_j per non-target
+     * point over the five OTHER dimensions, bounded by the noise functions'
+     * own min/max, minus the smallest target offset squared; then per-edge
+     * margins (see CertifiedMargins).
+     */
+    private static long[] certifiedForDim(int dim, long[] union,
+            List<? extends com.mojang.datafixers.util.Pair<Climate.ParameterPoint, Holder<Biome>>> points,
+            Set<Holder<Biome>> candidates, Climate.Sampler sampler) {
         long[] omegaLo = new long[6];
         long[] omegaHi = new long[6];
-        for (int dim = 0; dim < 5; dim++) {
-            if (dim == best) {
+        for (int d = 0; d < 6; d++) {
+            if (d == dim) {
                 continue;
             }
-            omegaLo[dim] = quantize(flatFunctionOf(sampler, dim).minValue());
-            omegaHi[dim] = quantize(flatFunctionOf(sampler, dim).maxValue());
+            omegaLo[d] = quantize(densityOf(sampler, d).minValue());
+            omegaHi[d] = quantize(densityOf(sampler, d).maxValue());
         }
-        omegaLo[5] = quantize(sampler.depth().minValue());
-        omegaHi[5] = quantize(sampler.depth().maxValue());
         long offTSquared = Long.MAX_VALUE;
-        List<long[]> nonTargetDim = new ArrayList<>();
+        List<long[]> rows = new ArrayList<>();
         for (var pair : points) {
             Climate.ParameterPoint point = pair.getFirst();
             if (candidates.contains(pair.getSecond())) {
@@ -518,28 +555,26 @@ public final class BiomeLocate {
                 continue;
             }
             long cPrime = point.offset() * point.offset();
-            for (int dim = 0; dim < 6; dim++) {
-                if (dim == best) {
+            for (int d = 0; d < 6; d++) {
+                if (d == dim) {
                     continue;
                 }
-                Climate.Parameter parameter = parameterOf(point, dim);
-                long dLo = CertifiedMargins.dist(parameter.min(), parameter.max(), omegaLo[dim]);
-                long dHi = CertifiedMargins.dist(parameter.min(), parameter.max(), omegaHi[dim]);
+                Climate.Parameter parameter = parameterOf(point, d);
+                long dLo = CertifiedMargins.dist(parameter.min(), parameter.max(), omegaLo[d]);
+                long dHi = CertifiedMargins.dist(parameter.min(), parameter.max(), omegaHi[d]);
                 long worst = Math.max(dLo, dHi);
                 cPrime += worst * worst;
             }
-            Climate.Parameter chosen = parameterOf(point, best);
-            nonTargetDim.add(new long[]{chosen.min(), chosen.max(),
-                    cPrime - (offTSquared == Long.MAX_VALUE ? 0 : 0)});
+            Climate.Parameter chosen = parameterOf(point, dim);
+            rows.add(new long[]{chosen.min(), chosen.max(), cPrime});
         }
-        // offT^2 subtracts from every c'_j (the bound compares against
-        // delta^2 + offT^2); fold it in now that it is known.
+        // The bound compares against delta^2 + offT^2, so offT^2 comes off
+        // every c'_j now that it is known.
         long offT2 = offTSquared == Long.MAX_VALUE ? 0 : offTSquared;
-        for (long[] row : nonTargetDim) {
+        for (long[] row : rows) {
             row[2] -= offT2;
         }
-        long[] certified = buildCertified(best, bestIntervals, nonTargetDim, offT2, sampler);
-        return new Prefilter(best, bestIntervals, certified);
+        return buildCertified(dim, union, rows, offT2, sampler);
     }
 
     /** Sorted, overlap-merged [min,max] pairs, flattened. */
@@ -762,7 +797,7 @@ public final class BiomeLocate {
             float[] flats = new float[5];
             boolean[] computed = new boolean[5];
             boolean certifiedRejected = false;
-            if (prefilter != null) {
+            if (prefilter != null && prefilter.dim() >= 0) {
                 int dim = prefilter.dim();
                 flats[dim] = (float) flatFunction(dim).compute(flat);
                 computed[dim] = true;
@@ -802,6 +837,14 @@ public final class BiomeLocate {
                 int blockY = QuartPos.toBlock(QuartPos.fromBlock(y));
                 float depth = (float) sampler.depth().compute(
                         new DensityFunction.SinglePointContext(blockX, blockY, blockZ));
+                // Proved-by-depth skip: no tree lookup for a y whose depth
+                // certifiably cannot host the target. Referee columns never
+                // skip and trip the contradiction alarm below instead.
+                boolean depthCertSkip = prefilter != null && CERTIFIED_TRUSTED.get()
+                        && prefilter.certifiedDepthRejects(Climate.quantizeCoord(depth));
+                if (depthCertSkip && !referee) {
+                    continue;
+                }
                 Holder<Biome> biome = multiNoise.getNoiseBiome(Climate.target(
                         temperature, humidity, continentalness, erosion, depth, weirdness));
                 if (referee) {
@@ -820,7 +863,7 @@ public final class BiomeLocate {
                     }
                 }
                 if (candidates.contains(biome)) {
-                    if (certifiedRejected) {
+                    if (certifiedRejected || depthCertSkip) {
                         // Should be impossible by the covering-bound proof.
                         LOGGER.error("CERTIFIED margin contradiction at column {},{} y {} in {}: "
                                         + "the proof rejected a column whose full scan found {}. "
