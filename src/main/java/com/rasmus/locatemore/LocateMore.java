@@ -492,15 +492,18 @@ public class LocateMore implements ModInitializer {
         }
 
         /**
-         * Lower bound on the distance of anything in the not-yet-pushed rings;
-         * the extra 16 covers a locate offset pulling the reported position
-         * outside its region.
+         * Lower bound on the distance of anything in the not-yet-pushed
+         * rings. Derivation: worst case the origin block sits at its
+         * region's far edge (coordinate (R+1)a-1, a = 16*spacing) and the
+         * nearest ring-r reported position is (R+r)a - 16 (spread offset 0,
+         * locate offset -16, the codec's bound), so
+         * d_min(r) = max(0, (r-1)a - 15).
          */
         long nextRingMinDistSqr() {
             if (nextRing > maxRing) {
                 return Long.MAX_VALUE;
             }
-            long d = Math.max(0, (long) Math.max(0, nextRing - 1) * placement.spacing() * 16 - 16);
+            long d = Math.max(0, (long) Math.max(0, nextRing - 1) * placement.spacing() * 16 - 15);
             return d * d;
         }
 

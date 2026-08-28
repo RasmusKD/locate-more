@@ -76,6 +76,11 @@ public final class BiomeLocate {
     private BiomeLocate() {
     }
 
+    /** Lab-harness hook, sibling of AsyncLocate.idle(). */
+    public static boolean idle() {
+        return ACTIVE.isEmpty();
+    }
+
     public static void init() {
         net.fabricmc.fabric.api.networking.v1.ServerPlayConnectionEvents.DISCONNECT.register((handler, server) -> {
             Task task = ACTIVE.get(handler.getPlayer().getUUID());
@@ -289,33 +294,39 @@ public final class BiomeLocate {
             if (raw.isEmpty() || globalMax <= globalMin) {
                 continue;
             }
-            raw.sort(Comparator.comparingLong(a -> a[0]));
-            List<long[]> merged = new ArrayList<>();
-            for (long[] interval : raw) {
-                if (!merged.isEmpty() && interval[0] <= merged.get(merged.size() - 1)[1]) {
-                    merged.get(merged.size() - 1)[1] =
-                            Math.max(merged.get(merged.size() - 1)[1], interval[1]);
-                } else {
-                    merged.add(new long[]{interval[0], interval[1]});
-                }
-            }
+            long[] flat = mergeIntervals(raw);
             long covered = 0;
-            for (long[] interval : merged) {
-                covered += interval[1] - interval[0];
+            for (int i = 0; i < flat.length; i += 2) {
+                covered += flat[i + 1] - flat[i];
             }
             double coverage = covered / (double) (globalMax - globalMin);
             if (coverage < bestCoverage) {
                 bestCoverage = coverage;
                 best = dim;
-                long[] flat = new long[merged.size() * 2];
-                for (int i = 0; i < merged.size(); i++) {
-                    flat[i * 2] = merged.get(i)[0];
-                    flat[i * 2 + 1] = merged.get(i)[1];
-                }
                 bestIntervals = flat;
             }
         }
         return best < 0 ? null : new Prefilter(best, bestIntervals);
+    }
+
+    /** Sorted, overlap-merged [min,max] pairs, flattened. */
+    private static long[] mergeIntervals(List<long[]> raw) {
+        raw.sort(Comparator.comparingLong(a -> a[0]));
+        List<long[]> merged = new ArrayList<>();
+        for (long[] interval : raw) {
+            if (!merged.isEmpty() && interval[0] <= merged.get(merged.size() - 1)[1]) {
+                merged.get(merged.size() - 1)[1] =
+                        Math.max(merged.get(merged.size() - 1)[1], interval[1]);
+            } else {
+                merged.add(new long[]{interval[0], interval[1]});
+            }
+        }
+        long[] flat = new long[merged.size() * 2];
+        for (int i = 0; i < merged.size(); i++) {
+            flat[i * 2] = merged.get(i)[0];
+            flat[i * 2 + 1] = merged.get(i)[1];
+        }
+        return flat;
     }
 
     /** One sample column, keyed on its exact horizontal distance. */
@@ -432,7 +443,7 @@ public final class BiomeLocate {
             List<Hit> hits = new ArrayList<>();
             long columns = 0;
             List<Column> batch = new ArrayList<>(BATCH);
-            List<java.util.concurrent.Callable<BlockPos>> samplers = new ArrayList<>(BATCH);
+            List<java.util.concurrent.Callable<BlockPos[]>> samplers = new ArrayList<>(BATCH / 64 + 1);
 
             while (!aborted.get() && hits.size() < count) {
                 batch.clear();
@@ -457,24 +468,44 @@ public final class BiomeLocate {
                 if (batch.isEmpty()) {
                     break;
                 }
-                for (Column column : batch) {
-                    samplers.add(() -> sampleColumn(column));
+                // 64 columns per callable: one future per column is pure
+                // scheduling overhead at millions of columns, and read-back
+                // is sequential either way, so chunking cannot reorder.
+                final int chunk = 64;
+                for (int start = 0; start < batch.size(); start += chunk) {
+                    final int from = start;
+                    final int to = Math.min(batch.size(), start + chunk);
+                    samplers.add(() -> {
+                        BlockPos[] out = new BlockPos[to - from];
+                        for (int i = from; i < to; i++) {
+                            out[i - from] = sampleColumn(batch.get(i));
+                        }
+                        return out;
+                    });
                 }
-                List<java.util.concurrent.Future<BlockPos>> results =
+                List<java.util.concurrent.Future<BlockPos[]>> results =
                         AsyncLocate.sharedMathPool().invokeAll(samplers);
                 columns += batch.size();
-                for (int i = 0; i < batch.size() && hits.size() < count; i++) {
-                    BlockPos found;
+                read:
+                for (int c = 0; c < results.size(); c++) {
+                    BlockPos[] chunkResults;
                     try {
-                        found = results.get(i).get();
+                        chunkResults = results.get(c).get();
                     } catch (java.util.concurrent.ExecutionException e) {
-                        LOGGER.warn("Biome sample failed at {}", batch.get(i), e.getCause());
+                        LOGGER.warn("Biome sample chunk failed near {}", batch.get(c * chunk), e.getCause());
                         continue;
                     }
-                    if (found != null && farEnough(hits, batch.get(i), separationSqr)) {
-                        Hit hit = new Hit(found, batch.get(i).distSqr());
-                        hits.add(hit);
-                        streamHit(hits.size(), hit);
+                    for (int i = 0; i < chunkResults.length; i++) {
+                        if (hits.size() >= count) {
+                            break read;
+                        }
+                        BlockPos found = chunkResults[i];
+                        Column column = batch.get(c * chunk + i);
+                        if (found != null && farEnough(hits, column, separationSqr)) {
+                            Hit hit = new Hit(found, column.distSqr());
+                            hits.add(hit);
+                            streamHit(hits.size(), hit);
+                        }
                     }
                 }
                 if ((System.nanoTime() - startNanos) / 1_000_000L > wallClockMs) {
@@ -536,6 +567,12 @@ public final class BiomeLocate {
             float continentalness = flats[2];
             float erosion = flats[3];
             float weirdness = flats[4];
+            // A per-y depth window (skip tree lookups when depth misses the
+            // target's declared intervals) was implemented and WITHDRAWN:
+            // multinoise is nearest-point, and rivers win at samples whose
+            // depth sits just outside their thin declared band - the referee
+            // caught the miss on vanilla within one battery run. Do not
+            // reintroduce without the certified margin machinery.
             for (int y : sampleYs) {
                 int blockY = QuartPos.toBlock(QuartPos.fromBlock(y));
                 float depth = (float) sampler.depth().compute(
@@ -561,11 +598,12 @@ public final class BiomeLocate {
                     if (prefilterRejected) {
                         PREFILTER_TRUSTED.set(false);
                         if (PREFILTER_WARNED.compareAndSet(false, true)) {
-                            LOGGER.warn("Prefilter referee disagreement at column {},{} in {}: the "
-                                            + "parameter intervals rejected a column whose full scan "
-                                            + "found {}. The prefilter is disabled for this session; "
-                                            + "results stay correct, but please report this line.",
-                                    column.x(), column.z(), dimension.identifier(), biome);
+                            LOGGER.warn("Interval referee disagreement at column {},{} y {} in {}: the "
+                                            + "parameter intervals would have skipped a sample whose "
+                                            + "full scan found {}. Interval shortcuts are disabled for "
+                                            + "this session; results stay correct, but please report "
+                                            + "this line.",
+                                    column.x(), column.z(), y, dimension.identifier(), biome);
                         }
                     }
                     return new BlockPos(column.x(), y, column.z());

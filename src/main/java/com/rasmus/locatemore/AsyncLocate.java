@@ -102,10 +102,33 @@ public final class AsyncLocate {
     private record MemoKey(ResourceKey<Level> dimension, Structure structure) {
     }
 
-    private static final Map<MemoKey, ConcurrentHashMap<Long, Boolean>> MATH_MEMO = new ConcurrentHashMap<>();
-    private static final int MATH_MEMO_CAP = 500_000;
+    // Two generations instead of clear-all-at-cap: inserts go to the new
+    // generation, old-generation hits are promoted, and hitting the cap
+    // drops only the old generation. Any verdict touched within the last
+    // half-cap of inserts survives (a 2-approximation of LRU), so the
+    // measured warm speedup no longer vanishes at an arbitrary moment
+    // mid-session. Verdicts are deterministic, so eviction policy can
+    // never change results.
+    private static volatile Map<MemoKey, ConcurrentHashMap<Long, Boolean>> MATH_MEMO_NEW = new ConcurrentHashMap<>();
+    private static volatile Map<MemoKey, ConcurrentHashMap<Long, Boolean>> MATH_MEMO_OLD = new ConcurrentHashMap<>();
+    private static final int MATH_MEMO_CAP = 250_000;
     private static final java.util.concurrent.atomic.AtomicInteger MATH_MEMO_SIZE =
             new java.util.concurrent.atomic.AtomicInteger();
+
+    private static synchronized void rotateMemo() {
+        if (MATH_MEMO_SIZE.get() <= MATH_MEMO_CAP) {
+            return; // another thread already rotated
+        }
+        MATH_MEMO_OLD = MATH_MEMO_NEW;
+        MATH_MEMO_NEW = new ConcurrentHashMap<>();
+        MATH_MEMO_SIZE.set(0);
+    }
+
+    private static void clearMemo() {
+        MATH_MEMO_NEW = new ConcurrentHashMap<>();
+        MATH_MEMO_OLD = new ConcurrentHashMap<>();
+        MATH_MEMO_SIZE.set(0);
+    }
 
     /** The sampler stack is used concurrently by vanilla's own worldgen workers. */
     private static final int MATH_POOL_SIZE = Math.max(2, Math.min(6, Runtime.getRuntime().availableProcessors() / 2));
@@ -115,6 +138,17 @@ public final class AsyncLocate {
     /** The biome engine samples on the same pool; see BiomeLocate. */
     static ExecutorService sharedMathPool() {
         return mathPool();
+    }
+
+    /**
+     * Lab-harness hook: true when no structure search is running, queued or
+     * resolving chunks. The battery driver in the local lab mod awaits this
+     * between commands instead of sleeping, which is what makes the release
+     * battery signal-paced rather than time-paced. Server thread only.
+     */
+    public static boolean idle() {
+        return ACTIVE.isEmpty() && INCOMING_LOADS.isEmpty() && loadsInFlight == 0
+                && WAITING_PLAYERS.isEmpty() && WAITING_API.isEmpty();
     }
 
     private static synchronized ExecutorService mathPool() {
@@ -150,8 +184,7 @@ public final class AsyncLocate {
             ACTIVE.clear();
             // Biome tags rebind on datapack reload and structure.biomes() is
             // tag-backed, so memoized math verdicts can go stale.
-            MATH_MEMO.clear();
-            MATH_MEMO_SIZE.set(0);
+            clearMemo();
             SetDraw.onReload();
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -174,8 +207,7 @@ public final class AsyncLocate {
                 mathPool.shutdownNow();
                 mathPool = null;
             }
-            MATH_MEMO.clear();
-            MATH_MEMO_SIZE.set(0);
+            clearMemo();
         });
     }
 
@@ -401,8 +433,19 @@ public final class AsyncLocate {
             LocateMore.Stats stats, java.util.function.Supplier<Structure.GenerationContext> context) {
         long pack = pos.pack();
         MemoKey key = new MemoKey(dimension, structure);
-        ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
+        ConcurrentHashMap<Long, Boolean> memo = MATH_MEMO_NEW.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
         Boolean cached = memo.get(pack);
+        if (cached == null) {
+            ConcurrentHashMap<Long, Boolean> old = MATH_MEMO_OLD.get(key);
+            if (old != null) {
+                cached = old.get(pack);
+                if (cached != null) {
+                    // Promote: a touched verdict survives the next rotation.
+                    memo.put(pack, cached);
+                    MATH_MEMO_SIZE.incrementAndGet();
+                }
+            }
+        }
         if (cached != null) {
             if (stats != null) {
                 stats.memoHits++;
@@ -413,9 +456,8 @@ public final class AsyncLocate {
         boolean possible = !monumentCornersFail(structure, ctx)
                 && structure.findValidGenerationPoint(ctx).isPresent();
         if (MATH_MEMO_SIZE.incrementAndGet() > MATH_MEMO_CAP) {
-            MATH_MEMO.clear();
-            MATH_MEMO_SIZE.set(0);
-            memo = MATH_MEMO.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
+            rotateMemo();
+            memo = MATH_MEMO_NEW.computeIfAbsent(key, k -> new ConcurrentHashMap<>());
         }
         memo.put(pack, possible);
         return possible;
@@ -855,6 +897,11 @@ public final class AsyncLocate {
                                 done.shadow().predictedWinner());
                         pending.add(load);
                         INCOMING_LOADS.add(load);
+                        // Kick the pump now instead of waiting for the tick
+                        // boundary: shaves up to one tick (50 ms) off
+                        // time-to-first-hit whenever the nearest candidate
+                        // needs generation.
+                        server.execute(() -> pumpLoads(server));
                     } else if (done.shadow().result() != null) {
                         // Shadow results always come from the candidate chunk's
                         // own NBT, so no legacy-mismatch handling is needed here
