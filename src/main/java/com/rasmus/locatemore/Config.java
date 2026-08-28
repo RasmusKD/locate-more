@@ -43,6 +43,19 @@ public final class Config {
      * engine, fixing MC-138887.
      */
     private static volatile boolean improveVanillaLocate = true;
+    /**
+     * Biome search gives up past this many blocks. Vanilla's radius is
+     * 6400; the default doubles it, since the search is pure math off the
+     * server thread and rare biomes are routinely farther than 6400.
+     */
+    private static volatile long biomeMaxDistanceBlocks = 12_800;
+    /**
+     * Two biome hits closer than this are the same place: within one
+     * search, a hit this close to an accepted hit is suppressed, so a
+     * count of N returns N distinct patches instead of N samples of the
+     * nearest one.
+     */
+    private static volatile int biomeSeparationBlocks = 512;
 
     private Config() {
     }
@@ -75,6 +88,14 @@ public final class Config {
         return improveVanillaLocate;
     }
 
+    public static long biomeMaxDistanceBlocks() {
+        return biomeMaxDistanceBlocks;
+    }
+
+    public static int biomeSeparationBlocks() {
+        return biomeSeparationBlocks;
+    }
+
     public static void load() {
         Path path = FabricLoader.getInstance().getConfigDir().resolve("locatemore.json");
         Gson gson = new GsonBuilder().setPrettyPrinting().create();
@@ -103,6 +124,14 @@ public final class Config {
                     if (json.has("improveVanillaLocate")) {
                         improveVanillaLocate = json.get("improveVanillaLocate").getAsBoolean();
                     }
+                    if (json.has("biomeMaxDistanceBlocks")) {
+                        biomeMaxDistanceBlocks = Math.min(1_000_000L,
+                                Math.max(1_000, json.get("biomeMaxDistanceBlocks").getAsLong()));
+                    }
+                    if (json.has("biomeSeparationBlocks")) {
+                        biomeSeparationBlocks = Math.max(32,
+                                Math.min(16_384, json.get("biomeSeparationBlocks").getAsInt()));
+                    }
                 }
             } catch (Exception e) {
                 LOGGER.warn("Could not parse {}; using defaults", path, e);
@@ -115,6 +144,8 @@ public final class Config {
         out.addProperty("maxActiveSearches", maxActiveSearches);
         out.addProperty("allowProbeChunkGeneration", allowProbeChunkGeneration);
         out.addProperty("improveVanillaLocate", improveVanillaLocate);
+        out.addProperty("biomeMaxDistanceBlocks", biomeMaxDistanceBlocks);
+        out.addProperty("biomeSeparationBlocks", biomeSeparationBlocks);
         try {
             Files.createDirectories(path.getParent());
             Files.writeString(path, gson.toJson(out), StandardCharsets.UTF_8);

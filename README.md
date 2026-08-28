@@ -1,10 +1,11 @@
 # LocateMore
 
-Find the N nearest structures instead of just the closest. Exact distance
-order. The server keeps ticking.
+Find the N nearest structures or biomes instead of just the closest. Exact
+distance order. The server keeps ticking.
 
 ```
 /locate structure minecraft:mansion 20
+/locate biome minecraft:mushroom_fields 3
 ```
 
 Vanilla `/locate` blocks the server thread and returns one result. That result
@@ -98,6 +99,24 @@ seconds and found 13 of 20. The async search never blocks a tick, and every
 release is diffed coordinate-for-coordinate against real generation on a
 fixed seed before it ships (test/run.sh, PORTING.md).
 
+## Biomes too
+
+`/locate biome` gets the same two upgrades. Vanilla walks a square spiral
+in 32-block steps on the server thread, blocking ticks until it returns the
+first match - which is only approximately nearest, because a ring's corner
+is farther than the next ring's edge. LocateMore samples the same grid
+through the same climate sampler, off-thread, in exact distance order, and
+an optional count streams the N nearest matches with clickable teleports
+(y included: a deep dark at -40 is not "here, but lower").
+
+N biome results are N distinct places: a hit within
+`biomeSeparationBlocks` (default 512) of an accepted hit is suppressed, so
+one giant swamp cannot fill the list. The search radius is
+`biomeMaxDistanceBlocks` (default 12800, double vanilla's 6400 - the search
+is pure math off the server thread, so the extra range costs no ticks).
+The `exact_locate` gamerule and the `improveVanillaLocate` kill switch
+gate the vanilla one-result path exactly like the structure call sites.
+
 ## API for other mods
 
 Plain `findNearestMapStructure` calls are already accelerated by the mixin.
@@ -170,6 +189,7 @@ marks the contract.
 | command | what |
 |---|---|
 | `/locate structure <id\|#tag> <count>` | async search, streams the N nearest |
+| `/locate biome <id\|#tag> <count>` | async biome search, N distinct patches |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
 | `/locatemore prune` | delete empty region files (vanilla's scan path still leaves them, MC-311323) |
 | `/gamerule locatemore:exact_locate` | per-world toggle for the vanilla call sites |

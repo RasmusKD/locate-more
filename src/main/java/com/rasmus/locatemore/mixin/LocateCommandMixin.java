@@ -1,11 +1,14 @@
 package com.rasmus.locatemore.mixin;
 
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
+import com.rasmus.locatemore.BiomeLocate;
 import com.rasmus.locatemore.LocateMore;
 import com.rasmus.locatemore.LocateMoreGameRules;
 import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.arguments.ResourceOrTagArgument;
 import net.minecraft.commands.arguments.ResourceOrTagKeyArgument;
 import net.minecraft.server.commands.LocateCommand;
+import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -35,5 +38,21 @@ public class LocateCommandMixin {
             return;
         }
         cir.setReturnValue(LocateMore.vanillaLocateAsync(source, resourceOrTag));
+    }
+
+    /**
+     * Same treatment for /locate biome: vanilla's spiral blocks the server
+     * thread for the whole search and is only approximately nearest; the
+     * async engine samples the same grid in exact distance order off-thread.
+     * The gamerule and kill switch gate it exactly like the structure path.
+     */
+    @Inject(method = "locateBiome", at = @At("HEAD"), cancellable = true)
+    private static void locatemore$asyncLocateBiome(CommandSourceStack source,
+            ResourceOrTagArgument.Result<Biome> resourceOrTag,
+            CallbackInfoReturnable<Integer> cir) {
+        if (!LocateMoreGameRules.enabled(source.getLevel()) || LocateMore.labBypass()) {
+            return;
+        }
+        cir.setReturnValue(BiomeLocate.start(source, resourceOrTag, 1));
     }
 }

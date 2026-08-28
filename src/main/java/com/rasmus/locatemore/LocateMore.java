@@ -124,6 +124,7 @@ public class LocateMore implements ModInitializer {
         Config.load();
         LocateMoreGameRules.init();
         AsyncLocate.init();
+        BiomeLocate.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher));
         LOGGER.info("Vanilla /locate, eyes of ender, and other mods now return the true nearest "
                 + "structure (MC-138887). Per world: /gamerule locatemore:exact_locate false. "
@@ -148,6 +149,24 @@ public class LocateMore implements ModInitializer {
         structureArg.addChild(
                 RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
                         .executes(LocateMore::locateAsync)
+                        .build());
+
+        CommandNode<CommandSourceStack> biomeLiteral = locate.getChild("biome");
+        CommandNode<CommandSourceStack> biomeArg = biomeLiteral == null ? null : biomeLiteral.getChild("biome");
+        if (biomeArg == null) {
+            LOGGER.warn("Could not find the vanilla /locate biome <biome> node; count argument not registered");
+            return;
+        }
+        if (biomeArg.getChild("count") != null) {
+            LOGGER.warn("Another mod already registered a 'count' argument on /locate biome; skipping graft");
+            return;
+        }
+        biomeArg.addChild(
+                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
+                        .executes(ctx -> BiomeLocate.start(ctx.getSource(),
+                                net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
+                                        ctx, "biome", Registries.BIOME),
+                                IntegerArgumentType.getInteger(ctx, "count")))
                         .build());
     }
 
