@@ -345,10 +345,31 @@ public final class AsyncLocate {
             setByPlacement.put(setHolder.value().placement(), setHolder);
         }
 
+        // For the empty-result message: which loaded dimensions can generate
+        // the requested structures at all (registry math, server thread).
+        StringBuilder dims = new StringBuilder();
+        for (ServerLevel candidateLevel : server.getAllLevels()) {
+            var possible = candidateLevel.getChunkSource().getGenerator().getBiomeSource().possibleBiomes();
+            boolean generates = false;
+            for (Holder<Structure> holder : holders) {
+                if (holder.value().biomes().stream().anyMatch(possible::contains)) {
+                    generates = true;
+                    break;
+                }
+            }
+            if (generates) {
+                if (dims.length() > 0) {
+                    dims.append(", ");
+                }
+                dims.append(candidateLevel.dimension().identifier());
+            }
+        }
+        String generatingDims = dims.toString();
         AtomicBoolean abortFlag = new AtomicBoolean();
         SearchSession session = new SearchSession(server, level.dimension(), source,
                 printable, abortFlag::get);
         Task built = new Task(server, level.dimension(), session, abortFlag, key, holders, count, origin,
+                generatingDims,
                 state, setByPlacement,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
@@ -695,6 +716,8 @@ public final class AsyncLocate {
         final HolderSet<Structure> holders;
         final int count;
         final BlockPos origin;
+        /** Dimension ids that can generate the requested structures. */
+        final String generatingDims;
         /** Safe off-thread: every lazy init is forced by getPlacementsForStructure on the server thread. */
         final ChunkGeneratorStructureState state;
         final Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement;
@@ -752,6 +775,7 @@ public final class AsyncLocate {
         Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
                 AtomicBoolean aborted, Object key,
                 HolderSet<Structure> holders, int count, BlockPos origin,
+                String generatingDims,
                 ChunkGeneratorStructureState state, Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement,
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
@@ -765,6 +789,7 @@ public final class AsyncLocate {
             this.holders = holders;
             this.count = count;
             this.origin = origin;
+            this.generatingDims = generatingDims;
             this.state = state;
             this.setByPlacement = setByPlacement;
             this.byPlacement = byPlacement;
@@ -1245,7 +1270,7 @@ public final class AsyncLocate {
             if (apiSink != null) {
                 return;
             }
-            session.chat(() -> LocateMore.hitLine(number, hit, session.printable));
+            session.chat(() -> LocateMore.hitLine(number, hit, session.printable, origin));
         }
 
         private void pushProgress(int found, int checked, long startNanos) {
@@ -1300,8 +1325,13 @@ public final class AsyncLocate {
                 return;
             }
             if (hits.isEmpty()) {
+                String where = generatingDims.isEmpty()
+                        ? " No loaded dimension can generate it."
+                        : generatingDims.contains(dimension.identifier().toString())
+                                ? ""
+                                : " It generates in: " + generatingDims + ".";
                 session.fail(Component.literal("No " + session.printable + " found within "
-                        + maxDistBlocks + " blocks."));
+                        + maxDistBlocks + " blocks." + where));
                 return;
             }
             {

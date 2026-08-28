@@ -161,8 +161,27 @@ public final class BiomeLocate {
                 .filter(target).collect(Collectors.toUnmodifiableSet());
         if (candidates.isEmpty()) {
             // This generator cannot produce the biome at all; vanilla's
-            // radius-exhausted error is also its cannot-exist error.
-            source.sendFailure(Component.translatableEscape("commands.locate.biome.not_found", printable));
+            // radius-exhausted error is also its cannot-exist error. Say
+            // which loaded dimensions CAN, so the miss teaches something.
+            StringBuilder dims = new StringBuilder();
+            for (ServerLevel other : source.getServer().getAllLevels()) {
+                if (other == level) {
+                    continue;
+                }
+                if (other.getChunkSource().getGenerator().getBiomeSource()
+                        .possibleBiomes().stream().anyMatch(target)) {
+                    if (dims.length() > 0) {
+                        dims.append(", ");
+                    }
+                    dims.append(other.dimension().identifier());
+                }
+            }
+            Component message = Component.translatableEscape("commands.locate.biome.not_found", printable);
+            if (dims.length() > 0) {
+                message = Component.empty().append(message)
+                        .append(Component.literal(" (generates in: " + dims + ")"));
+            }
+            source.sendFailure(message);
             return 0;
         }
         BlockPos origin = BlockPos.containing(source.getPosition());
@@ -965,7 +984,7 @@ public final class BiomeLocate {
         }
 
         private void streamHit(int number, Hit hit) {
-            session.chat(() -> hitLine(number, hit.pos(), hit.distSqr(), session.printable));
+            session.chat(() -> hitLine(number, hit.pos(), hit.distSqr(), session.printable, origin));
         }
 
         /**
@@ -973,8 +992,12 @@ public final class BiomeLocate {
          * included: unlike structures, the biome result's height is the
          * point (a deep dark at -40 is not "here, but lower").
          */
-        private static Component hitLine(int number, BlockPos pos, long distSqr, String printable) {
+        private static Component hitLine(int number, BlockPos pos, long distSqr, String printable,
+                BlockPos origin) {
             int distance = Mth.floor(Mth.sqrt((float) distSqr));
+            String heading = distance >= 16
+                    ? LocateMore.octant(pos.getX() - origin.getX(), pos.getZ() - origin.getZ())
+                    : "away";
             Component coordinates = ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
                             pos.getX(), pos.getY(), pos.getZ()))
                     .withStyle(style -> style.withColor(ChatFormatting.GREEN)
@@ -982,11 +1005,13 @@ public final class BiomeLocate {
                                     "/tp @s " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
                             .withHoverEvent(new HoverEvent.ShowText(
                                     Component.translatable("chat.coordinates.tooltip"))));
+            String name = LocateMore.trackName(printable, number);
             return Component.literal(number + ". ")
                     .append(coordinates)
-                    .append(Component.literal(" (" + distance + " blocks away) "))
-                    .append(LocateMore.trackButton(pos.getX(), pos.getY(), pos.getZ(),
-                            LocateMore.trackName(printable, number)));
+                    .append(Component.literal(" (" + distance + " blocks " + heading + ") "))
+                    .append(LocateMore.trackButton(pos.getX(), pos.getY(), pos.getZ(), name))
+                    .append(Component.literal(" "))
+                    .append(LocateMore.compassButton(pos.getX(), pos.getY(), pos.getZ(), name));
         }
 
         private void pushProgress(int found, long columns, long startNanos) {
