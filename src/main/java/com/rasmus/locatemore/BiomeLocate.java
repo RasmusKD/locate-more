@@ -98,6 +98,7 @@ public final class BiomeLocate {
             ACTIVE.clear();
             CLIMATE_TRUSTED.set(true);
             PREFILTER_TRUSTED.set(true);
+            CERTIFIED_TRUSTED.set(true);
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (Task task : ACTIVE.values()) {
@@ -106,6 +107,7 @@ public final class BiomeLocate {
             ACTIVE.clear();
             CLIMATE_TRUSTED.set(true);
             PREFILTER_TRUSTED.set(true);
+            CERTIFIED_TRUSTED.set(true);
             if (worker != null) {
                 worker.shutdownNow();
                 worker = null;
@@ -124,6 +126,9 @@ public final class BiomeLocate {
      * referee when a full scan finds what the prefilter would have skipped. */
     private static final AtomicBoolean PREFILTER_TRUSTED = new AtomicBoolean(true);
     private static final AtomicBoolean PREFILTER_WARNED = new AtomicBoolean();
+    /** Tripwire for the certified margins themselves; a contradiction is a
+     * bug in this mod's math, so everything interval-based shuts off. */
+    private static final AtomicBoolean CERTIFIED_TRUSTED = new AtomicBoolean(true);
 
     /**
      * Sized to the shared active-search cap: biome searches are pure math
@@ -168,7 +173,7 @@ public final class BiomeLocate {
                 biomeSource instanceof MultiNoiseBiomeSource mn
                         && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
                         ? mn : null;
-        Prefilter prefilter = buildPrefilter(multiNoise, candidates);
+        Prefilter prefilter = buildPrefilter(multiNoise, candidates, sampler);
         AtomicBoolean abortFlag = new AtomicBoolean();
         SearchSession session = new SearchSession(source.getServer(), level.dimension(), source,
                 printable, abortFlag::get);
@@ -251,7 +256,7 @@ public final class BiomeLocate {
      * @param dim index into the five 2D dimensions (t, h, c, e, w)
      * @param intervals quantized, merged, sorted [min,max] pairs, flattened
      */
-    private record Prefilter(int dim, long[] intervals) {
+    private record Prefilter(int dim, long[] intervals, long[] certified) {
 
         boolean rejects(long quantized) {
             for (int i = 0; i < intervals.length; i += 2) {
@@ -261,13 +266,190 @@ public final class BiomeLocate {
             }
             return true;
         }
+
+        /**
+         * True when the value lies in a region where rejection is PROVED:
+         * some non-target parameter point strictly beats every target's
+         * best possible fitness there (the covering bound, see
+         * CertifiedMargins). Independent of the trust flags - a proof does
+         * not need a referee.
+         */
+        boolean certifiedRejects(long quantized) {
+            for (int i = 0; i < certified.length; i += 2) {
+                if (quantized >= certified[i] && quantized <= certified[i + 1]) {
+                    return true;
+                }
+            }
+            return false;
+        }
     }
 
     /** Coverage above this share of the global range filters nothing worth
      * the extra branch; common biomes (plains, forest) land here. */
     private static final double PREFILTER_MAX_COVERAGE = 0.7;
 
-    private static Prefilter buildPrefilter(MultiNoiseBiomeSource multiNoise, Set<Holder<Biome>> candidates) {
+    /**
+     * The covering bound that turns interval rejection into a proof.
+     *
+     * <p>Multinoise picks the parameter point with minimal fitness =
+     * sum of squared per-dimension distances to the point's intervals plus
+     * a squared offset (Climate.ParameterPoint.fitness). For a sample whose
+     * chosen-dimension value t lies delta outside the target union U, every
+     * target's fitness is at least delta^2 + offT^2 (its interval is inside
+     * U, offT = the smallest target offset). If some non-target point j is
+     * PROVABLY closer - dist_d(I_j, t)^2 + c'_j < delta^2 + offT^2, where
+     * c'_j upper-bounds j's cost in every other dimension via the noise
+     * functions' own minValue/maxValue bounds - the target cannot win, for
+     * any y, on any datapack, with no referee needed.
+     *
+     * <p>On a ray outward from a union edge, h_j(t) = delta(t)^2 -
+     * dist_d^2 - c'_j is monotone nondecreasing for every j whose interval
+     * reaches the edge (the three regimes have derivative 2(a_j-u), 2 delta
+     * and 2(b_j-u), all nonnegative there), so the smallest certified
+     * distance per j is a binary search in exact long arithmetic, and the
+     * side's margin is the minimum over j. Contributors whose interval ends
+     * before the edge are skipped (their h decreases; ignoring them only
+     * shrinks the certified region - conservative, never unsound). Interior
+     * gaps use each edge's analysis on its own half, where delta is exactly
+     * the distance to that edge.
+     */
+    private static final class CertifiedMargins {
+
+        /** Interval distance to a point, quantized units. */
+        static long dist(long min, long max, long t) {
+            if (t < min) {
+                return min - t;
+            }
+            return t > max ? t - max : 0;
+        }
+
+        /**
+         * Minimal m >= 1 with m^2 > dist(I_j, u + dir*m)^2 + cPrime, or -1
+         * when even `cap` does not certify. dir = +1 above the edge,
+         * -1 below; monotonicity requires the interval to reach the edge
+         * on that side (checked by the caller).
+         */
+        static long minCertified(long a, long b, long u, int dir, long cPrime, long cap) {
+            long lo = 1;
+            long hi = cap;
+            if (!certifies(a, b, u, dir, cPrime, hi)) {
+                return -1;
+            }
+            while (lo < hi) {
+                long mid = (lo + hi) >>> 1;
+                if (certifies(a, b, u, dir, cPrime, mid)) {
+                    hi = mid;
+                } else {
+                    lo = mid + 1;
+                }
+            }
+            return lo;
+        }
+
+        static boolean certifies(long a, long b, long u, int dir, long cPrime, long m) {
+            long t = u + dir * m;
+            long d = dist(a, b, t);
+            return m * m - d * d > cPrime;
+        }
+
+        /**
+         * The certified margin on one side of one union edge: the smallest
+         * distance beyond which SOME non-target point provably wins.
+         * points rows: {a_j, b_j, cPrime_j}. -1 when nothing certifies.
+         */
+        static long sideMargin(long[][] nonTarget, long u, int dir, long cap) {
+            long best = -1;
+            for (long[] j : nonTarget) {
+                boolean reaches = dir > 0 ? j[1] >= u : j[0] <= u;
+                if (!reaches) {
+                    continue;
+                }
+                long m = minCertified(j[0], j[1], u, dir, j[2], cap);
+                if (m >= 0 && (best < 0 || m < best)) {
+                    best = m;
+                }
+            }
+            return best;
+        }
+    }
+
+    private static long quantize(double value) {
+        return Climate.quantizeCoord((float) value);
+    }
+
+    /**
+     * Certified rejection intervals for the chosen dimension: outside rays
+     * beyond the union plus the provable middles of interior gaps. Empty
+     * when nothing certifies (the engine then behaves exactly as the
+     * referee-guarded tier alone).
+     */
+    private static long[] buildCertified(int dim, long[] union,
+            List<long[]> nonTargetDim, long offTSquared, Climate.Sampler sampler) {
+        // c'_j already folded into nonTargetDim rows by the caller.
+        long lo = quantize(flatFunctionOf(sampler, dim).minValue());
+        long hi = quantize(flatFunctionOf(sampler, dim).maxValue());
+        long cap = Math.max(1, hi - lo);
+        long[][] rows = nonTargetDim.toArray(new long[0][]);
+        List<long[]> out = new ArrayList<>();
+        long uMin = union[0];
+        long uMax = union[union.length - 1];
+        long below = CertifiedMargins.sideMargin(rows, uMin, -1, cap);
+        if (below >= 0) {
+            out.add(new long[]{Long.MIN_VALUE / 4, uMin - below});
+        }
+        long above = CertifiedMargins.sideMargin(rows, uMax, +1, cap);
+        if (above >= 0) {
+            out.add(new long[]{uMax + above, Long.MAX_VALUE / 4});
+        }
+        for (int i = 1; i * 2 < union.length; i++) {
+            long g0 = union[i * 2 - 1];
+            long g1 = union[i * 2];
+            long half = (g1 - g0) / 2;
+            long left = CertifiedMargins.sideMargin(rows, g0, +1, cap);
+            long right = CertifiedMargins.sideMargin(rows, g1, -1, cap);
+            long start = left >= 0 && left <= half ? g0 + left : Long.MAX_VALUE;
+            long end = right >= 0 && right <= half ? g1 - right : Long.MIN_VALUE;
+            if (left >= 0 && left <= half && !(right >= 0 && right <= half)) {
+                end = g0 + half;
+            }
+            if (right >= 0 && right <= half && !(left >= 0 && left <= half)) {
+                start = g1 - half;
+            }
+            if (start <= end) {
+                out.add(new long[]{start, end});
+            }
+        }
+        long[] flat = new long[out.size() * 2];
+        for (int i = 0; i < out.size(); i++) {
+            flat[i * 2] = out.get(i)[0];
+            flat[i * 2 + 1] = out.get(i)[1];
+        }
+        return flat;
+    }
+
+    private static DensityFunction flatFunctionOf(Climate.Sampler sampler, int dim) {
+        return switch (dim) {
+            case 0 -> sampler.temperature();
+            case 1 -> sampler.humidity();
+            case 2 -> sampler.continentalness();
+            case 3 -> sampler.erosion();
+            default -> sampler.weirdness();
+        };
+    }
+
+    private static Climate.Parameter parameterOf(Climate.ParameterPoint point, int dim) {
+        return switch (dim) {
+            case 0 -> point.temperature();
+            case 1 -> point.humidity();
+            case 2 -> point.continentalness();
+            case 3 -> point.erosion();
+            case 4 -> point.weirdness();
+            default -> point.depth();
+        };
+    }
+
+    private static Prefilter buildPrefilter(MultiNoiseBiomeSource multiNoise, Set<Holder<Biome>> candidates,
+            Climate.Sampler sampler) {
         if (multiNoise == null) {
             return null;
         }
@@ -309,7 +491,55 @@ public final class BiomeLocate {
                 bestIntervals = flat;
             }
         }
-        return best < 0 ? null : new Prefilter(best, bestIntervals);
+        if (best < 0) {
+            return null;
+        }
+        // Certified tier: c'_j per non-target point over the five other
+        // dimensions (four flats + depth), bounded by the noise functions'
+        // own min/max, minus the smallest target offset squared.
+        long[] omegaLo = new long[6];
+        long[] omegaHi = new long[6];
+        for (int dim = 0; dim < 5; dim++) {
+            if (dim == best) {
+                continue;
+            }
+            omegaLo[dim] = quantize(flatFunctionOf(sampler, dim).minValue());
+            omegaHi[dim] = quantize(flatFunctionOf(sampler, dim).maxValue());
+        }
+        omegaLo[5] = quantize(sampler.depth().minValue());
+        omegaHi[5] = quantize(sampler.depth().maxValue());
+        long offTSquared = Long.MAX_VALUE;
+        List<long[]> nonTargetDim = new ArrayList<>();
+        for (var pair : points) {
+            Climate.ParameterPoint point = pair.getFirst();
+            if (candidates.contains(pair.getSecond())) {
+                long off = point.offset();
+                offTSquared = Math.min(offTSquared, off * off);
+                continue;
+            }
+            long cPrime = point.offset() * point.offset();
+            for (int dim = 0; dim < 6; dim++) {
+                if (dim == best) {
+                    continue;
+                }
+                Climate.Parameter parameter = parameterOf(point, dim);
+                long dLo = CertifiedMargins.dist(parameter.min(), parameter.max(), omegaLo[dim]);
+                long dHi = CertifiedMargins.dist(parameter.min(), parameter.max(), omegaHi[dim]);
+                long worst = Math.max(dLo, dHi);
+                cPrime += worst * worst;
+            }
+            Climate.Parameter chosen = parameterOf(point, best);
+            nonTargetDim.add(new long[]{chosen.min(), chosen.max(),
+                    cPrime - (offTSquared == Long.MAX_VALUE ? 0 : 0)});
+        }
+        // offT^2 subtracts from every c'_j (the bound compares against
+        // delta^2 + offT^2); fold it in now that it is known.
+        long offT2 = offTSquared == Long.MAX_VALUE ? 0 : offTSquared;
+        for (long[] row : nonTargetDim) {
+            row[2] -= offT2;
+        }
+        long[] certified = buildCertified(best, bestIntervals, nonTargetDim, offT2, sampler);
+        return new Prefilter(best, bestIntervals, certified);
     }
 
     /** Sorted, overlap-merged [min,max] pairs, flattened. */
@@ -531,11 +761,21 @@ public final class BiomeLocate {
             boolean prefilterRejected = false;
             float[] flats = new float[5];
             boolean[] computed = new boolean[5];
-            if (prefilter != null && PREFILTER_TRUSTED.get()) {
+            boolean certifiedRejected = false;
+            if (prefilter != null) {
                 int dim = prefilter.dim();
                 flats[dim] = (float) flatFunction(dim).compute(flat);
                 computed[dim] = true;
-                if (prefilter.rejects(Climate.quantizeCoord(flats[dim]))) {
+                long quantized = Climate.quantizeCoord(flats[dim]);
+                if (CERTIFIED_TRUSTED.get() && prefilter.certifiedRejects(quantized)) {
+                    // Proved, not trusted: no referee, no trust flag. Referee
+                    // columns still run the full scan as a tripwire on the
+                    // margin math itself; a hit there is a bug, not drift.
+                    if (!referee) {
+                        return null;
+                    }
+                    certifiedRejected = true;
+                } else if (PREFILTER_TRUSTED.get() && prefilter.rejects(quantized)) {
                     if (!referee) {
                         return null;
                     }
@@ -580,6 +820,16 @@ public final class BiomeLocate {
                     }
                 }
                 if (candidates.contains(biome)) {
+                    if (certifiedRejected) {
+                        // Should be impossible by the covering-bound proof.
+                        LOGGER.error("CERTIFIED margin contradiction at column {},{} y {} in {}: "
+                                        + "the proof rejected a column whose full scan found {}. "
+                                        + "This is a bug in the margin computation - please report. "
+                                        + "Disabling all interval shortcuts for this session.",
+                                column.x(), column.z(), y, dimension.identifier(), biome);
+                        PREFILTER_TRUSTED.set(false);
+                        CERTIFIED_TRUSTED.set(false);
+                    }
                     if (prefilterRejected) {
                         PREFILTER_TRUSTED.set(false);
                         if (PREFILTER_WARNED.compareAndSet(false, true)) {
