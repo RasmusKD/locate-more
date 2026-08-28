@@ -5,7 +5,8 @@
   "mixins": [
     "ChunkGeneratorMixin",
     "LocateCommandMixin",
-    "MinecraftServerAccessor"
+    "MinecraftServerAccessor",
+    "MultiNoiseBiomeSourceInvoker"
   ],
   "injectors": {
     "defaultRequire": 1

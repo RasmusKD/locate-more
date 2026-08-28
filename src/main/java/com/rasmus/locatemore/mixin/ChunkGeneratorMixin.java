@@ -37,6 +37,14 @@ public abstract class ChunkGeneratorMixin {
         if (!LocateMoreGameRules.enabled(level) || LocateMore.labBypass()) {
             return;
         }
+        // Some mods (Async Locator's eye-of-ender/trade paths, and anything
+        // built like it) call vanilla's search from their own worker threads.
+        // The exact engine's sync path is built for the server thread
+        // (budgeted tick queues, region catalog confinement), so off-thread
+        // callers get vanilla's own search untouched instead.
+        if (!level.getServer().isSameThread()) {
+            return;
+        }
         boolean[] gaveUp = new boolean[1];
         Pair<BlockPos, Holder<Structure>> hit = LocateMore.findNearestExact(level, holders, pos, radius,
                 skipExistingChunks, gaveUp);

@@ -125,6 +125,7 @@ public class LocateMore implements ModInitializer {
         LocateMoreGameRules.init();
         AsyncLocate.init();
         BiomeLocate.init();
+        TravelTracker.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher));
         LOGGER.info("Vanilla /locate, eyes of ender, and other mods now return the true nearest "
                 + "structure (MC-138887). Per world: /gamerule locatemore:exact_locate false. "
@@ -134,40 +135,42 @@ public class LocateMore implements ModInitializer {
     private static void graft(CommandDispatcher<CommandSourceStack> dispatcher) {
         registerDebugCommand(dispatcher);
         CommandNode<CommandSourceStack> locate = dispatcher.getRoot().getChild("locate");
-        CommandNode<CommandSourceStack> structureLiteral = locate == null ? null : locate.getChild("structure");
+        if (locate == null) {
+            LOGGER.warn("Could not find the vanilla /locate command; count arguments not registered");
+            return;
+        }
+        // Each graft fails independently: a conflict on the structure node
+        // must not cost the biome node its count argument, or vice versa.
+        CommandNode<CommandSourceStack> structureLiteral = locate.getChild("structure");
         CommandNode<CommandSourceStack> structureArg = structureLiteral == null ? null : structureLiteral.getChild("structure");
         if (structureArg == null) {
             LOGGER.warn("Could not find the vanilla /locate structure <structure> node; count argument not registered");
-            return;
-        }
-        if (structureArg.getChild("count") != null) {
+        } else if (structureArg.getChild("count") != null) {
             // Brigadier merges same-named children but keeps the existing node's
             // argument type, which would break our executor at runtime.
             LOGGER.warn("Another mod already registered a 'count' argument on /locate structure; skipping graft");
-            return;
+        } else {
+            structureArg.addChild(
+                    RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
+                            .executes(LocateMore::locateAsync)
+                            .build());
         }
-        structureArg.addChild(
-                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
-                        .executes(LocateMore::locateAsync)
-                        .build());
 
         CommandNode<CommandSourceStack> biomeLiteral = locate.getChild("biome");
         CommandNode<CommandSourceStack> biomeArg = biomeLiteral == null ? null : biomeLiteral.getChild("biome");
         if (biomeArg == null) {
             LOGGER.warn("Could not find the vanilla /locate biome <biome> node; count argument not registered");
-            return;
-        }
-        if (biomeArg.getChild("count") != null) {
+        } else if (biomeArg.getChild("count") != null) {
             LOGGER.warn("Another mod already registered a 'count' argument on /locate biome; skipping graft");
-            return;
+        } else {
+            biomeArg.addChild(
+                    RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
+                            .executes(ctx -> BiomeLocate.start(ctx.getSource(),
+                                    net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
+                                            ctx, "biome", Registries.BIOME),
+                                    IntegerArgumentType.getInteger(ctx, "count")))
+                            .build());
         }
-        biomeArg.addChild(
-                RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
-                        .executes(ctx -> BiomeLocate.start(ctx.getSource(),
-                                net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
-                                        ctx, "biome", Registries.BIOME),
-                                IntegerArgumentType.getInteger(ctx, "count")))
-                        .build());
     }
 
     /**
@@ -181,6 +184,32 @@ public class LocateMore implements ModInitializer {
     private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
                 .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_GAMEMASTERS))
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("track")
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
+                            if (ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player
+                                    && TravelTracker.stop(player)) {
+                                ctx.getSource().sendSuccess(() -> Component.literal("Tracking stopped.")
+                                        .withStyle(ChatFormatting.GRAY), false);
+                            }
+                            return 1;
+                        }))
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
+                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
+                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
+                                                                com.mojang.brigadier.arguments.StringArgumentType.greedyString())
+                                                        .executes(ctx -> {
+                                                            if (ctx.getSource().getEntity()
+                                                                    instanceof net.minecraft.server.level.ServerPlayer player) {
+                                                                TravelTracker.track(player, new BlockPos(
+                                                                                IntegerArgumentType.getInteger(ctx, "x"),
+                                                                                IntegerArgumentType.getInteger(ctx, "y"),
+                                                                                IntegerArgumentType.getInteger(ctx, "z")),
+                                                                        com.mojang.brigadier.arguments.StringArgumentType
+                                                                                .getString(ctx, "name"));
+                                                            }
+                                                            return 1;
+                                                        }))))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("prune").executes(ctx -> {
                     ServerLevel level = ctx.getSource().getLevel();
                     java.nio.file.Path dir = ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
@@ -233,8 +262,12 @@ public class LocateMore implements ModInitializer {
                 registry::get
         ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
         BlockPos origin = BlockPos.containing(source.getPosition());
+        // Deliberately generation-backed (trustMath=false), but on the server
+        // thread with an operator waiting: a 10 s budget keeps a pathological
+        // tag from stalling ticks for minutes in the never-stalls mod.
         List<Hit> hits = smartLocate(level, holders, origin, samples,
-                System.nanoTime(), new int[1], new Stats());
+                System.nanoTime(), new int[1], new Stats(),
+                Integer.MAX_VALUE, new boolean[1], false, false, 10_000);
         int agree = 0;
         int shadowMissing = 0;
         for (Hit hit : hits) {
@@ -275,6 +308,22 @@ public class LocateMore implements ModInitializer {
         return startAsync(source, result, 1);
     }
 
+    /**
+     * Gate for the mixin: false when a requested structure sits behind a
+     * placement type the engine cannot enumerate, so the mixin steps aside
+     * and vanilla's own (blocking, but complete) search runs instead.
+     * Resolution failures return true: the async path reports invalid ids
+     * exactly like vanilla, so there is nothing to step aside for.
+     */
+    public static boolean vanillaAsyncSupported(CommandSourceStack source,
+            ResourceOrTagKeyArgument.Result<Structure> result) {
+        Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        var holders = result.unwrap().map(
+                key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
+                registry::get);
+        return holders.isEmpty() || !hasUnsupportedPlacement(source.getLevel(), holders.get());
+    }
+
     private static int startAsync(CommandSourceStack source,
             ResourceOrTagKeyArgument.Result<Structure> result, int count) throws CommandSyntaxException {
         Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
@@ -295,9 +344,12 @@ public class LocateMore implements ModInitializer {
 
     /**
      * Built from vanilla client lang keys only ("chat.coordinates"), so
-     * unmodded clients on a dedicated server render it correctly.
+     * unmodded clients on a dedicated server render it correctly. The
+     * [track] button arms the action-bar travel tracker: distance and a
+     * direction arrow while walking there, self-clearing on arrival, so
+     * nothing needs cleaning up afterwards.
      */
-    static Component hitLine(int number, Hit hit) {
+    static Component hitLine(int number, Hit hit, String printable) {
         int distance = Mth.floor(Mth.sqrt((float) hit.horizDistSqr()));
         Component coordinates = ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
                         hit.pos().getX(), "~", hit.pos().getZ()))
@@ -307,7 +359,21 @@ public class LocateMore implements ModInitializer {
                         .withHoverEvent(new HoverEvent.ShowText(Component.translatable("chat.coordinates.tooltip"))));
         return Component.literal(number + ". ")
                 .append(coordinates)
-                .append(Component.literal(" (" + distance + " blocks away)"));
+                .append(Component.literal(" (" + distance + " blocks away) "))
+                .append(trackButton(hit.pos().getX(), 0, hit.pos().getZ(), trackName(printable, number)));
+    }
+
+    static Component trackButton(int x, int y, int z, String name) {
+        return Component.literal("[track]").withStyle(style -> style.withColor(ChatFormatting.AQUA)
+                .withClickEvent(new ClickEvent.RunCommand(
+                        "/locatemore track " + x + " " + y + " " + z + " " + name))
+                .withHoverEvent(new HoverEvent.ShowText(
+                        Component.literal("Live distance and direction in the action bar"))));
+    }
+
+    static String trackName(String printable, int number) {
+        int colon = printable.lastIndexOf(':');
+        return (colon >= 0 ? printable.substring(colon + 1) : printable) + " #" + number;
     }
 
     static long horizDistSqr(BlockPos a, BlockPos b) {
@@ -469,6 +535,13 @@ public class LocateMore implements ModInitializer {
     public static Pair<BlockPos, Holder<Structure>> findNearestExact(ServerLevel level,
             HolderSet<Structure> holders, BlockPos origin, int ringRadius, boolean skipExistingChunks,
             boolean[] gaveUp) {
+        if (hasUnsupportedPlacement(level, holders)) {
+            // A modded StructurePlacement subclass the engine cannot
+            // enumerate: give up immediately so vanilla's own search runs.
+            // Slow beats silently missing a structure that exists.
+            gaveUp[0] = true;
+            return null;
+        }
         long startNanos = System.nanoTime();
         int[] checked = new int[1];
         List<Hit> hits = smartLocate(level, holders, origin, 1, startNanos, checked, new Stats(),
@@ -495,6 +568,25 @@ public class LocateMore implements ModInitializer {
         }
         Hit hit = hits.get(0);
         return Pair.of(hit.pos(), hit.holder());
+    }
+
+    /**
+     * True when any placement behind the requested structures is a type the
+     * candidate enumeration does not understand (a modded StructurePlacement
+     * subclass). The engine can only walk placements it can enumerate; for
+     * anything else the callers fall back to vanilla or say so out loud.
+     */
+    public static boolean hasUnsupportedPlacement(ServerLevel level, HolderSet<Structure> holders) {
+        ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
+        for (Holder<Structure> holder : holders) {
+            for (StructurePlacement placement : state.getPlacementsForStructure(holder)) {
+                if (!(placement instanceof RandomSpreadStructurePlacement)
+                        && !(placement instanceof ConcentricRingsStructurePlacement)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private static int GAVE_UP_COUNT;

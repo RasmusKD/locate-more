@@ -1,37 +1,37 @@
-1. [-1872, ~, -528] (1945 blocks away)
-1. [-1872, ~, -528] (1945 blocks away)
-2. [2944, ~, 3296] (4419 blocks away)
-3. [1824, ~, -5840] (6118 blocks away)
-4. [-3488, ~, 6848] (7685 blocks away)
-5. [9616, ~, 4528] (10628 blocks away)
-1. [-1360, ~, -368] (1408 blocks away)
-2. [-1520, ~, -1136] (1897 blocks away)
-3. [-2128, ~, -928] (2321 blocks away)
-4. [192, ~, 2400] (2407 blocks away)
-5. [-592, ~, 2400] (2471 blocks away)
-1. [-1312, ~, 272] (1339 blocks away)
-2. [-1232, ~, 720] (1426 blocks away)
-3. [2224, ~, -1376] (2615 blocks away)
-4. [1728, ~, -1968] (2618 blocks away)
-5. [848, ~, -2528] (2666 blocks away)
-1. [-736, ~, 2736] (2833 blocks away)
-2. [272, ~, -2944] (2956 blocks away)
-3. [-2032, ~, 2272] (3048 blocks away)
-4. [-1520, ~, 2816] (3200 blocks away)
-5. [-3344, ~, -160] (3347 blocks away)
-1. [32, ~, 16] (35 blocks away)
-2. [-480, ~, 656] (812 blocks away)
-3. [-816, ~, 16] (816 blocks away)
-4. [832, ~, 368] (909 blocks away)
-5. [1136, ~, 224] (1157 blocks away)
-1. [208, ~, 352] (408 blocks away)
-2. [464, ~, -160] (490 blocks away)
-3. [-688, ~, 80] (692 blocks away)
-4. [-416, ~, -560] (697 blocks away)
-5. [-96, ~, 752] (758 blocks away)
-1. [-151, ~, 89] (175 blocks away)
-2. [-279, ~, 25] (280 blocks away)
-3. [-199, ~, -295] (355 blocks away)
+1. [-1872, ~, -528] (1945 blocks away) [track]
+1. [-1872, ~, -528] (1945 blocks away) [track]
+2. [2944, ~, 3296] (4419 blocks away) [track]
+3. [1824, ~, -5840] (6118 blocks away) [track]
+4. [-3488, ~, 6848] (7685 blocks away) [track]
+5. [9616, ~, 4528] (10628 blocks away) [track]
+1. [-1360, ~, -368] (1408 blocks away) [track]
+2. [-1520, ~, -1136] (1897 blocks away) [track]
+3. [-2128, ~, -928] (2321 blocks away) [track]
+4. [192, ~, 2400] (2407 blocks away) [track]
+5. [-592, ~, 2400] (2471 blocks away) [track]
+1. [-1312, ~, 272] (1339 blocks away) [track]
+2. [-1232, ~, 720] (1426 blocks away) [track]
+3. [2224, ~, -1376] (2615 blocks away) [track]
+4. [1728, ~, -1968] (2618 blocks away) [track]
+5. [848, ~, -2528] (2666 blocks away) [track]
+1. [-736, ~, 2736] (2833 blocks away) [track]
+2. [272, ~, -2944] (2956 blocks away) [track]
+3. [-2032, ~, 2272] (3048 blocks away) [track]
+4. [-1520, ~, 2816] (3200 blocks away) [track]
+5. [-3344, ~, -160] (3347 blocks away) [track]
+1. [32, ~, 16] (35 blocks away) [track]
+2. [-480, ~, 656] (812 blocks away) [track]
+3. [-816, ~, 16] (816 blocks away) [track]
+4. [832, ~, 368] (909 blocks away) [track]
+5. [1136, ~, 224] (1157 blocks away) [track]
+1. [208, ~, 352] (408 blocks away) [track]
+2. [464, ~, -160] (490 blocks away) [track]
+3. [-688, ~, 80] (692 blocks away) [track]
+4. [-416, ~, -560] (697 blocks away) [track]
+5. [-96, ~, 752] (758 blocks away) [track]
+1. [-151, ~, 89] (175 blocks away) [track]
+2. [-279, ~, 25] (280 blocks away) [track]
+3. [-199, ~, -295] (355 blocks away) [track]
 1. [-1872, ~, -528] (1945 blocks away)
 2. [2944, ~, 3296] (4419 blocks away)
 3. [1824, ~, -5840] (6118 blocks away)
@@ -57,13 +57,13 @@ Shadow verify minecraft:mansion: 5 agree)
 2. [2944, ~, 3296] (skipKnown)
 1. [-151, ~, 89] (skipKnown)
 2. [-279, ~, 25] (skipKnown)
-1. [-64, 100, 160] (172 blocks away)
-2. [-64, 100, -352] (357 blocks away)
-3. [448, 100, 320] (550 blocks away)
-4. [-544, 100, -160] (567 blocks away)
-5. [480, 100, -352] (595 blocks away)
-1. [-96, 100, -32] (101 blocks away)
-2. [288, 100, 320] (430 blocks away)
-3. [-352, 100, 448] (569 blocks away)
+1. [-64, 100, 160] (172 blocks away) [track]
+2. [-64, 100, -352] (357 blocks away) [track]
+3. [448, 100, 320] (550 blocks away) [track]
+4. [-544, 100, -160] (567 blocks away) [track]
+5. [480, 100, -352] (595 blocks away) [track]
+1. [-96, 100, -32] (101 blocks away) [track]
+2. [288, 100, 320] (430 blocks away) [track]
+3. [-352, 100, 448] (569 blocks away) [track]
 The nearest minecraft:desert is at [3808, 100, -2432] (4518 blocks away)
-1. [3936, 100, -2144] (4482 blocks away)
+1. [3936, 100, -2144] (4482 blocks away) [track]

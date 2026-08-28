@@ -314,7 +314,7 @@ public final class AsyncLocate {
             setByPlacement.put(setHolder.value().placement(), setHolder);
         }
 
-        return new Task(server, level.dimension(), source, key, printable, holders, count, origin,
+        Task built = new Task(server, level.dimension(), source, key, printable, holders, count, origin,
                 state, setByPlacement,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
@@ -323,6 +323,17 @@ public final class AsyncLocate {
                 LevelHeightAccessor.create(level.getMinY(), level.getHeight()),
                 level.getChunkSource().chunkScanner(),
                 server.getFixerUpper(), state.getLevelSeed());
+        for (StructurePlacement placement : byPlacement.keySet()) {
+            if (!(placement instanceof RandomSpreadStructurePlacement)
+                    && !(placement instanceof ConcentricRingsStructurePlacement)) {
+                // A modded placement type the candidate walk cannot
+                // enumerate: the search proceeds over the placements it
+                // understands, and the summary says so instead of letting
+                // a silent miss masquerade as "not found".
+                built.unsupportedPlacement = true;
+            }
+        }
+        return built;
     }
 
     /**
@@ -398,7 +409,9 @@ public final class AsyncLocate {
             }
             return cached;
         }
-        boolean possible = structure.findValidGenerationPoint(context.get()).isPresent();
+        Structure.GenerationContext ctx = context.get();
+        boolean possible = !monumentCornersFail(structure, ctx)
+                && structure.findValidGenerationPoint(ctx).isPresent();
         if (MATH_MEMO_SIZE.incrementAndGet() > MATH_MEMO_CAP) {
             MATH_MEMO.clear();
             MATH_MEMO_SIZE.set(0);
@@ -408,6 +421,45 @@ public final class AsyncLocate {
         return possible;
     }
 
+
+    /**
+     * Monument's generation gate demands EVERY biome in a 29-block-radius
+     * quart box (15x15x15 = 3375 samples) carry the ocean tag, and rejected
+     * candidates pay the whole box. The 8 corners of that box are members
+     * of vanilla's own sample set, so any corner failing the tag proves
+     * vanilla's check fails: pure permissive rejection, 8 samples instead
+     * of 3375 on the (common) miss path. Exact class match, so a modded
+     * subclass with a different gate never takes the shortcut, and the tag
+     * itself is read live, so datapack tag changes flow through. The
+     * release battery's monument line gates this against both game
+     * versions.
+     */
+    private static boolean monumentCornersFail(Structure structure, Structure.GenerationContext context) {
+        if (structure.getClass()
+                != net.minecraft.world.level.levelgen.structure.structures.OceanMonumentStructure.class) {
+            return false;
+        }
+        int centerX = context.chunkPos().getBlockX(9);
+        int centerZ = context.chunkPos().getBlockZ(9);
+        int seaLevel = context.chunkGenerator().getSeaLevel();
+        int[] xs = {net.minecraft.core.QuartPos.fromBlock(centerX - 29),
+                net.minecraft.core.QuartPos.fromBlock(centerX + 29)};
+        int[] ys = {net.minecraft.core.QuartPos.fromBlock(seaLevel - 29),
+                net.minecraft.core.QuartPos.fromBlock(seaLevel + 29)};
+        int[] zs = {net.minecraft.core.QuartPos.fromBlock(centerZ - 29),
+                net.minecraft.core.QuartPos.fromBlock(centerZ + 29)};
+        for (int x : xs) {
+            for (int y : ys) {
+                for (int z : zs) {
+                    if (!context.biomeSource().getNoiseBiome(x, y, z, context.randomState().sampler())
+                            .is(net.minecraft.tags.BiomeTags.REQUIRED_OCEAN_MONUMENT_SURROUNDING)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
 
     private static synchronized ExecutorService workerExecutor() {
         if (worker == null || worker.isShutdown()) {
@@ -477,7 +529,7 @@ public final class AsyncLocate {
                 continue;
             }
             if (!pending.task.allowGeneration) {
-                pending.task.unresolved++;
+                pending.task.unresolved.incrementAndGet();
                 pending.result.complete(null);
                 continue;
             }
@@ -514,7 +566,7 @@ public final class AsyncLocate {
                             } else {
                                 LOGGER.warn("Chunk resolution failed twice at {}; a candidate was dropped",
                                         pending.candidate.pos());
-                                pending.task.unresolved++;
+                                pending.task.unresolved.incrementAndGet();
                                 pending.result.complete(null);
                             }
                             return;
@@ -524,8 +576,9 @@ public final class AsyncLocate {
                         // Scratch stats: the worker already counted this load.
                         // An exception must never leave the future incomplete,
                         // or it would pin the ordering barrier forever.
+                        LocateMore.VerifyResult found = null;
                         try {
-                            LocateMore.VerifyResult found = LocateMore.verify(pending.candidate.holders(), level,
+                            found = LocateMore.verify(pending.candidate.holders(), level,
                                     level.structureManager(), pending.candidate.placement(),
                                     pending.candidate.pos(), false, new LocateMore.Stats());
                             if (pending.knownAbsent) {
@@ -568,12 +621,13 @@ public final class AsyncLocate {
                                                     : found.holder().unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
                                 }
                             }
-                            pending.result.complete(found);
                         } catch (Throwable t) {
                             LOGGER.error("Chunk verification failed at {}", pos, t);
-                            pending.task.unresolved++;
+                            pending.task.unresolved.incrementAndGet();
                         } finally {
-                            pending.result.complete(null);
+                            // Single completion point: found stays null on any
+                            // failure, and nothing can pin the ordering barrier.
+                            pending.result.complete(found);
                         }
                     }, server);
         }
@@ -619,7 +673,7 @@ public final class AsyncLocate {
 
         final AtomicBoolean aborted = new AtomicBoolean();
         /** Candidates lost to resolution failure or the probe-generation switch. */
-        volatile int unresolved;
+        final java.util.concurrent.atomic.AtomicInteger unresolved = new java.util.concurrent.atomic.AtomicInteger();
         /** Set when the search ends normally, so leftover pending loads are dropped. */
         volatile boolean completed;
         final LocateMore.Stats stats = new LocateMore.Stats();
@@ -631,6 +685,9 @@ public final class AsyncLocate {
         int drawHits;
         /** True when a budget (wall clock or load cap) cut the search short. */
         boolean budgetStopped;
+        /** A requested structure sits behind a placement type the engine
+         * cannot enumerate; the summary discloses the possible blind spot. */
+        boolean unsupportedPlacement;
         /** When set, results complete this future instead of going to chat. */
         volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
         /** Regions with chunk data on disk; null means unknown, scan everything. */
@@ -779,7 +836,7 @@ public final class AsyncLocate {
                         // Exceptionally completed (modded placement or structure
                         // threw): drop the candidate, keep the search alive.
                         LOGGER.warn("Shadow verification failed at {}", shadow.candidate().pos(), e);
-                        unresolved++;
+                        unresolved.incrementAndGet();
                         iterator.remove();
                         continue;
                     }
@@ -1145,7 +1202,7 @@ public final class AsyncLocate {
                 if (aborted.get() || !stillDeliverable()) {
                     return;
                 }
-                source.sendSuccess(() -> LocateMore.hitLine(number, hit), false);
+                source.sendSuccess(() -> LocateMore.hitLine(number, hit, printable), false);
             });
         }
 
@@ -1175,22 +1232,37 @@ public final class AsyncLocate {
                 LOGGER.info("On-disk draw sample: {}/{} predictions matched already-generated chunks ({}).",
                         stats.drawSeenHits, stats.drawSeen, printable);
             }
-            server.execute(() -> {
-                removeBossBar();
-                if (apiSink != null) {
-                    if (error != null) {
-                        apiSink.completeExceptionally(error);
-                        return;
-                    }
-                    List<LocateMoreApi.StructureHit> out = new ArrayList<>(hits.size());
-                    for (LocateMore.Hit hit : hits) {
-                        out.add(new LocateMoreApi.StructureHit(hit.pos(), hit.holder(),
-                                Math.sqrt((double) hit.horizDistSqr())));
-                    }
-                    apiSink.complete(new LocateMoreApi.SearchResult(List.copyOf(out), unresolved == 0,
-                            hits.size() >= count || !budgetStopped, tookMs));
+            // API futures complete directly: routing them through the server
+            // executor could drop the completion on a stopping server, and a
+            // caller awaiting the future would hang forever. Completing off
+            // the server thread is safe; the contract's "completes on the
+            // server thread" holds on every path except server shutdown,
+            // where completing at all is the contract that matters.
+            if (apiSink != null) {
+                server.execute(this::removeBossBar);
+                if (error != null) {
+                    apiSink.completeExceptionally(error);
                     return;
                 }
+                List<LocateMoreApi.StructureHit> out = new ArrayList<>(hits.size());
+                for (LocateMore.Hit hit : hits) {
+                    out.add(new LocateMoreApi.StructureHit(hit.pos(), hit.holder(),
+                            Math.sqrt((double) hit.horizDistSqr())));
+                }
+                CompletableFuture<LocateMoreApi.SearchResult> sink = apiSink;
+                LocateMoreApi.SearchResult result = new LocateMoreApi.SearchResult(List.copyOf(out),
+                        unresolved.get() == 0, hits.size() >= count || !budgetStopped, tookMs);
+                server.execute(() -> sink.complete(result));
+                // Backstop: a stopping server can drop the scheduled hop, and
+                // complete() is first-wins, so a delayed off-thread completion
+                // guarantees the caller never hangs without ever changing the
+                // value delivered on the normal path.
+                CompletableFuture.delayedExecutor(5, TimeUnit.SECONDS)
+                        .execute(() -> sink.complete(result));
+                return;
+            }
+            server.execute(() -> {
+                removeBossBar();
                 if (!stillDeliverable()) {
                     return;
                 }
@@ -1207,15 +1279,20 @@ public final class AsyncLocate {
                 // A clean search earns a quiet line; the counters only appear when
                 // they explain something (chunk work, partial results, or a
                 // referee disagreement).
-                boolean interesting = stats.loads > 0 || unresolved > 0 || hits.size() < count
-                        || mathHits < mathLoads || stats.drawSeenHits < stats.drawSeen;
+                boolean interesting = stats.loads > 0 || unresolved.get() > 0 || hits.size() < count
+                        || mathHits < mathLoads || stats.drawSeenHits < stats.drawSeen
+                        || unsupportedPlacement;
                 String detail = "";
                 if (interesting) {
                     String baseNote = hits.size() < count
                             ? " - only " + hits.size() + " of " + count + " within range/budget" : "";
-                    String note = unresolved > 0
-                            ? baseNote + " - " + unresolved + " candidates unresolved; ordering not guaranteed"
+                    String note = unresolved.get() > 0
+                            ? baseNote + " - " + unresolved.get() + " candidates unresolved; ordering not guaranteed"
                             : baseNote;
+                    if (unsupportedPlacement) {
+                        note += " - a placement type this engine cannot enumerate was skipped;"
+                                + " vanilla /locate (gamerule locatemore:exact_locate false) still covers it";
+                    }
                     String probeNote = mathLoads > 0
                             ? " - generated " + mathLoads + " probe chunks" : "";
                     String mathNote = (mathLoads > 0 ? " math=" + mathHits + "/" + mathLoads : "")

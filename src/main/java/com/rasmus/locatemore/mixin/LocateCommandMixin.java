@@ -34,7 +34,8 @@ public class LocateCommandMixin {
     private static void locatemore$asyncLocate(CommandSourceStack source,
             ResourceOrTagKeyArgument.Result<Structure> resourceOrTag,
             CallbackInfoReturnable<Integer> cir) throws CommandSyntaxException {
-        if (!LocateMoreGameRules.enabled(source.getLevel()) || LocateMore.labBypass()) {
+        if (!LocateMoreGameRules.enabled(source.getLevel()) || LocateMore.labBypass()
+                || !LocateMore.vanillaAsyncSupported(source, resourceOrTag)) {
             return;
         }
         cir.setReturnValue(LocateMore.vanillaLocateAsync(source, resourceOrTag));
