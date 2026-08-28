@@ -102,7 +102,6 @@ public class LocateMore implements ModInitializer {
     static long maxDistBlocks() {
         return Config.maxDistanceBlocks();
     }
-    /** Safety valves for pathological placements (checked inside expansion too). */
     /**
      * Budget for the vanilla-facing sync path. Sized from measurement, not
      * caution: the worst case we could force on a mature 536-region world
@@ -376,6 +375,25 @@ public class LocateMore implements ModInitializer {
         return (colon >= 0 ? printable.substring(colon + 1) : printable) + " #" + number;
     }
 
+    /**
+     * One expansion pass, shared by both engines: push every source whose
+     * next ring could rank at or before the current queue head. Callers
+     * loop this with their own budget and abort checks until it returns
+     * false, at which point the queue head is provably globally nearest.
+     */
+    static boolean pushDueRings(java.util.List<SpreadSource> sources,
+            PriorityQueue<Candidate> queue, long seed, BlockPos origin, long maxDistSqr) {
+        boolean expanded = false;
+        long head = queue.isEmpty() ? maxDistSqr : Math.min(queue.peek().distSqr(), maxDistSqr);
+        for (SpreadSource src : sources) {
+            if (src.nextRingMinDistSqr() <= head) {
+                src.pushNextRing(seed, origin, queue);
+                expanded = true;
+            }
+        }
+        return expanded;
+    }
+
     static long horizDistSqr(BlockPos a, BlockPos b) {
         long dx = a.getX() - b.getX();
         long dz = a.getZ() - b.getZ();
@@ -583,13 +601,18 @@ public class LocateMore implements ModInitializer {
         ChunkGeneratorStructureState state = level.getChunkSource().getGeneratorState();
         for (Holder<Structure> holder : holders) {
             for (StructurePlacement placement : state.getPlacementsForStructure(holder)) {
-                if (!(placement instanceof RandomSpreadStructurePlacement)
-                        && !(placement instanceof ConcentricRingsStructurePlacement)) {
+                if (!supportedPlacement(placement)) {
                     return true;
                 }
             }
         }
         return false;
+    }
+
+    /** The two placement families the candidate walk can enumerate. */
+    static boolean supportedPlacement(StructurePlacement placement) {
+        return placement instanceof RandomSpreadStructurePlacement
+                || placement instanceof ConcentricRingsStructurePlacement;
     }
 
     private static int GAVE_UP_COUNT;
@@ -701,16 +724,7 @@ public class LocateMore implements ModInitializer {
             // Keep every source expanded far enough that the queue head is
             // globally nearest. Budget-checked: a placement that never
             // verifies must not spin expansion forever.
-            boolean expanded = true;
-            while (expanded) {
-                expanded = false;
-                long head = queue.isEmpty() ? maxDistSqr : Math.min(queue.peek().distSqr(), maxDistSqr);
-                for (SpreadSource src : sources) {
-                    if (src.nextRingMinDistSqr() <= head) {
-                        src.pushNextRing(seed, origin, queue);
-                        expanded = true;
-                    }
-                }
+            while (pushDueRings(sources, queue, seed, origin, maxDistSqr)) {
                 if (syncOverBudget(startNanos, checkedOut[0], budgetMs)) {
                     gaveUp[0] = true;
                     break search;
@@ -788,10 +802,5 @@ public class LocateMore implements ModInitializer {
         return checked >= MAX_CANDIDATE_CHECKS
                 || (System.nanoTime() - startNanos) / 1_000_000L > budgetMs;
     }
-
-    // ------------------------------------------------------------------
-    // Lab mode: unmodified vanilla nearest-searches from a probe grid.
-    // ------------------------------------------------------------------
-
 
 }

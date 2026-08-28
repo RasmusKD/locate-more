@@ -68,7 +68,6 @@ public final class AsyncLocate {
 
     private static final Logger LOGGER = LoggerFactory.getLogger("locatemore-async");
 
-    /** Kill switch only; the deterministic bounds are distance + candidate caps. */
     /**
      * Waiting room for when every worker slot is busy: player searches admit
      * first (an API consumer must never make a player's /locate feel slow),
@@ -356,8 +355,7 @@ public final class AsyncLocate {
                 level.getChunkSource().chunkScanner(),
                 server.getFixerUpper(), state.getLevelSeed());
         for (StructurePlacement placement : byPlacement.keySet()) {
-            if (!(placement instanceof RandomSpreadStructurePlacement)
-                    && !(placement instanceof ConcentricRingsStructurePlacement)) {
+            if (!LocateMore.supportedPlacement(placement)) {
                 // A modded placement type the candidate walk cannot
                 // enumerate: the search proceeds over the placements it
                 // understands, and the summary says so instead of letting
@@ -693,7 +691,7 @@ public final class AsyncLocate {
         final Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement;
         final Map<StructurePlacement, Set<Holder<Structure>>> byPlacement;
         final List<LocateMore.Candidate> concentric;
-        /** Pre-seeded dedup key for next-mode: the structure the player stands in. */
+        /** Deliverability key: results are dropped once this player is gone. */
         final UUID playerId;
 
         // Captured for the shadow check; all safe off-thread per the audit.
@@ -936,26 +934,7 @@ public final class AsyncLocate {
                 // The queue head is part of the barrier: dispatch order is
                 // monotone, so it only ever bites after a legacy re-queue
                 // inserted a corrected key below already-dispatched ones.
-                long barrier = Long.MAX_VALUE;
-                if (!queue.isEmpty()) {
-                    barrier = queue.peek().distSqr();
-                }
-                for (PendingShadow shadow : shadows) {
-                    barrier = Math.min(barrier, shadow.candidate().distSqr());
-                }
-                for (PendingLoad load : pending) {
-                    barrier = Math.min(barrier, load.candidate.distSqr());
-                }
-                while (!buffered.isEmpty() && buffered.peek().distSqr() <= barrier && hits.size() < count) {
-                    LocateMore.Candidate done = buffered.poll();
-                    LocateMore.VerifyResult found = done.resolved();
-                    if (seen.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))) {
-                        LocateMore.Hit hit = new LocateMore.Hit(found.pos().immutable(), found.holder(),
-                                LocateMore.horizDistSqr(found.pos(), origin));
-                        hits.add(hit);
-                        streamHit(hits.size(), hit);
-                    }
-                }
+                drainBuffered(queue, shadows, pending, buffered, hits, seen);
                 if (hits.size() >= count) {
                     break;
                 }
@@ -969,16 +948,7 @@ public final class AsyncLocate {
                     Thread.sleep(5L);
                     continue;
                 }
-                boolean expanded = true;
-                while (expanded) {
-                    expanded = false;
-                    long head = queue.isEmpty() ? maxDistSqr : Math.min(queue.peek().distSqr(), maxDistSqr);
-                    for (LocateMore.SpreadSource src : sources) {
-                        if (src.nextRingMinDistSqr() <= head) {
-                            src.pushNextRing(seed, origin, queue);
-                            expanded = true;
-                        }
-                    }
+                while (LocateMore.pushDueRings(sources, queue, seed, origin, maxDistSqr)) {
                     if (aborted.get()) {
                         break search;
                     }
@@ -1005,18 +975,36 @@ public final class AsyncLocate {
             }
             // Budget/count exits: verified hits that nothing still in flight
             // (or still queued) can outrank are results, not waste.
-            long finalBarrier = Long.MAX_VALUE;
-            if (!queue.isEmpty()) {
-                finalBarrier = queue.peek().distSqr();
+            if (!aborted.get()) {
+                drainBuffered(queue, shadows, pending, buffered, hits, seen);
             }
+            return hits;
+        }
+
+        private record PendingShadow(LocateMore.Candidate candidate, CompletableFuture<ShadowDone> future) {
+        }
+
+        private record ShadowDone(Shadow shadow, LocateMore.Stats scratch) {
+        }
+
+        /**
+         * Finalize buffered hits that nothing in flight or queued can
+         * outrank. The queue head participates because dispatch order is
+         * monotone, so it only ever bites after a legacy re-queue inserted
+         * a corrected key below already-dispatched ones.
+         */
+        private void drainBuffered(PriorityQueue<LocateMore.Candidate> queue,
+                List<PendingShadow> shadows, List<PendingLoad> pending,
+                PriorityQueue<LocateMore.Candidate> buffered,
+                List<LocateMore.Hit> hits, Set<LocateMore.DedupKey> seen) {
+            long barrier = queue.isEmpty() ? Long.MAX_VALUE : queue.peek().distSqr();
             for (PendingShadow shadow : shadows) {
-                finalBarrier = Math.min(finalBarrier, shadow.candidate().distSqr());
+                barrier = Math.min(barrier, shadow.candidate().distSqr());
             }
             for (PendingLoad load : pending) {
-                finalBarrier = Math.min(finalBarrier, load.candidate.distSqr());
+                barrier = Math.min(barrier, load.candidate.distSqr());
             }
-            while (!buffered.isEmpty() && buffered.peek().distSqr() <= finalBarrier && hits.size() < count
-                    && !aborted.get()) {
+            while (!buffered.isEmpty() && buffered.peek().distSqr() <= barrier && hits.size() < count) {
                 LocateMore.Candidate done = buffered.poll();
                 LocateMore.VerifyResult found = done.resolved();
                 if (seen.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))) {
@@ -1026,13 +1014,6 @@ public final class AsyncLocate {
                     streamHit(hits.size(), hit);
                 }
             }
-            return hits;
-        }
-
-        private record PendingShadow(LocateMore.Candidate candidate, CompletableFuture<ShadowDone> future) {
-        }
-
-        private record ShadowDone(Shadow shadow, LocateMore.Stats scratch) {
         }
 
         private boolean overBudget(long startNanos, int checked) {
