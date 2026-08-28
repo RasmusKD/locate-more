@@ -34,6 +34,8 @@ import net.minecraft.world.level.Level;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
+import net.minecraft.world.level.levelgen.DensityFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -89,18 +91,28 @@ public final class BiomeLocate {
                 task.abort();
             }
             ACTIVE.clear();
+            CLIMATE_TRUSTED.set(true);
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (Task task : ACTIVE.values()) {
                 task.abort();
             }
             ACTIVE.clear();
+            CLIMATE_TRUSTED.set(true);
             if (worker != null) {
                 worker.shutdownNow();
                 worker = null;
             }
         });
     }
+
+    /**
+     * Session trust for the column-constant climate shortcut, revoked by the
+     * standing referee on any disagreement (the SetDraw pattern). Reset on
+     * datapack reload and server stop, since both can change the router.
+     */
+    private static final AtomicBoolean CLIMATE_TRUSTED = new AtomicBoolean(true);
+    private static final AtomicBoolean CLIMATE_WARNED = new AtomicBoolean();
 
     /**
      * Sized to the shared active-search cap: biome searches are pure math
@@ -140,11 +152,18 @@ public final class BiomeLocate {
         BlockPos origin = BlockPos.containing(source.getPosition());
         int[] sampleYs = Mth.outFromOrigin(origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, VERT_STEP)
                 .toArray();
+        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        MultiNoiseBiomeSource multiNoise =
+                biomeSource instanceof MultiNoiseBiomeSource mn
+                        && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
+                        ? mn : null;
         Task task = new Task(source.getServer(), level.dimension(), source,
                 source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console-biome",
                 printable, candidates, count, origin, sampleYs,
-                biomeSource, level.getChunkSource().randomState().sampler());
+                biomeSource, sampler, multiNoise);
 
+        LOGGER.debug("Biome search {} ({}): column-constant climate shortcut {}", printable,
+                level.dimension().identifier(), multiNoise != null ? "active" : "off");
         Task previous = ACTIVE.get(task.key);
         if (previous != null) {
             previous.abort();
@@ -163,6 +182,38 @@ public final class BiomeLocate {
         return 1;
     }
 
+    /**
+     * The seed-finder observation behind the fast column scan: in vanilla's
+     * router, five of the six climate functions (temperature, humidity,
+     * continentalness, erosion, weirdness) are 2D - only depth varies with
+     * y - so a column's five values need computing once, not once per y
+     * sample. Datapacks can register 3D climate functions, so the shortcut
+     * must be earned per world: this probes a few columns at the extreme
+     * heights and requires bit-identical values before the shortcut is
+     * allowed, and a standing 1-in-64 referee keeps comparing full samples
+     * during searches (any disagreement revokes the shortcut for the
+     * session). Non-multinoise sources always take the plain path.
+     */
+    private static boolean columnConstantClimate(Climate.Sampler sampler, BlockPos origin,
+            int yLow, int yHigh) {
+        DensityFunction[] flat = {sampler.temperature(), sampler.humidity(),
+                sampler.continentalness(), sampler.erosion(), sampler.weirdness()};
+        for (int i = 0; i < 4; i++) {
+            int x = QuartPos.toBlock(QuartPos.fromBlock(origin.getX() + i * 1027));
+            int z = QuartPos.toBlock(QuartPos.fromBlock(origin.getZ() - i * 913));
+            DensityFunction.SinglePointContext low = new DensityFunction.SinglePointContext(
+                    x, QuartPos.toBlock(QuartPos.fromBlock(yLow)), z);
+            DensityFunction.SinglePointContext high = new DensityFunction.SinglePointContext(
+                    x, QuartPos.toBlock(QuartPos.fromBlock(yHigh)), z);
+            for (DensityFunction fn : flat) {
+                if (fn.compute(low) != fn.compute(high)) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /** One sample column, keyed on its exact horizontal distance. */
     private record Column(int x, int z, long distSqr) {
     }
@@ -179,6 +230,8 @@ public final class BiomeLocate {
         final int[] sampleYs;
         final BiomeSource biomeSource;
         final Climate.Sampler sampler;
+        /** Non-null only when the column-constant climate probe passed. */
+        final MultiNoiseBiomeSource multiNoise;
         final UUID playerId;
 
         final AtomicBoolean aborted = new AtomicBoolean();
@@ -187,7 +240,7 @@ public final class BiomeLocate {
 
         Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
                 String printable, Set<Holder<Biome>> candidates, int count, BlockPos origin, int[] sampleYs,
-                BiomeSource biomeSource, Climate.Sampler sampler) {
+                BiomeSource biomeSource, Climate.Sampler sampler, MultiNoiseBiomeSource multiNoise) {
             this.server = server;
             this.dimension = dimension;
             this.source = source;
@@ -199,6 +252,7 @@ public final class BiomeLocate {
             this.sampleYs = sampleYs;
             this.biomeSource = biomeSource;
             this.sampler = sampler;
+            this.multiNoise = multiNoise;
             this.playerId = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : null;
         }
 
@@ -243,59 +297,147 @@ public final class BiomeLocate {
         private record Hit(BlockPos pos, long distSqr) {
         }
 
-        private List<Hit> search(long startNanos) {
+        /** Columns per parallel batch: large enough to keep the math pool
+         * saturated, small enough that a hit near the front does not pay
+         * for a whole far batch before the next command can supersede. */
+        private static final int BATCH = 1024;
+
+        private List<Hit> search(long startNanos) throws InterruptedException {
             long radius = Config.biomeMaxDistanceBlocks();
             long radiusSqr = radius * radius;
             long separationSqr = (long) Config.biomeSeparationBlocks() * Config.biomeSeparationBlocks();
             long wallClockMs = Config.wallClockSeconds() * 1000L;
             int maxRing = (int) (radius / HORIZ_STEP) + 1;
 
-            // Exact order over vanilla's own sample grid: rings feed a
-            // priority queue, and a ring is only expanded once something in
-            // it could rank at the head. Ring r's nearest column sits at
-            // exactly r*32 blocks, so the bound is tight.
+            // Exact order over vanilla's own sample grid, sampled in
+            // parallel: rings feed a priority queue, batches of the nearest
+            // not-yet-sampled columns fan out across the structure engine's
+            // math pool, and the results are read back in the batch's own
+            // ascending-distance order. A column may only enter a batch when
+            // every unpushed ring is provably farther (ring r's nearest
+            // column sits at exactly r*32 blocks), so parallelism never
+            // reorders anything: acceptance, separation and streaming all
+            // happen sequentially over ascending distances, exactly as the
+            // single-threaded loop did - the pool only computes the samples.
             PriorityQueue<Column> queue = new PriorityQueue<>(Comparator.comparingLong(Column::distSqr));
             int nextRing = 0;
             List<Hit> hits = new ArrayList<>();
             long columns = 0;
+            List<Column> batch = new ArrayList<>(BATCH);
+            List<java.util.concurrent.Callable<BlockPos>> samplers = new ArrayList<>(BATCH);
 
             while (!aborted.get() && hits.size() < count) {
-                long head = queue.isEmpty() ? radiusSqr : Math.min(queue.peek().distSqr(), radiusSqr);
-                while (nextRing <= maxRing
-                        && square((long) nextRing * HORIZ_STEP) <= head) {
-                    pushRing(nextRing++, queue);
-                    head = queue.isEmpty() ? radiusSqr : Math.min(queue.peek().distSqr(), radiusSqr);
-                }
-                Column column = queue.poll();
-                if (column == null || column.distSqr() > radiusSqr) {
-                    break;
-                }
-                columns++;
-                // Vanilla's column scan verbatim: y out from the player's
-                // own height, first match wins the column.
-                int noiseX = QuartPos.fromBlock(column.x());
-                int noiseZ = QuartPos.fromBlock(column.z());
-                for (int y : sampleYs) {
-                    Holder<Biome> biome = biomeSource.getNoiseBiome(
-                            noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
-                    if (!candidates.contains(biome)) {
+                batch.clear();
+                samplers.clear();
+                while (batch.size() < BATCH) {
+                    long pushedBound = square((long) nextRing * HORIZ_STEP);
+                    // >= : at an exact tie the ring is pushed before the
+                    // column is pulled, same order as the pre-parallel loop,
+                    // so the blessed golden files stay comparable.
+                    if (queue.isEmpty() || (nextRing <= maxRing && queue.peek().distSqr() >= pushedBound)) {
+                        if (nextRing > maxRing) {
+                            break;
+                        }
+                        pushRing(nextRing++, queue);
                         continue;
                     }
-                    if (farEnough(hits, column, separationSqr)) {
-                        Hit hit = new Hit(new BlockPos(column.x(), y, column.z()), column.distSqr());
+                    if (queue.peek().distSqr() > radiusSqr) {
+                        break;
+                    }
+                    batch.add(queue.poll());
+                }
+                if (batch.isEmpty()) {
+                    break;
+                }
+                for (Column column : batch) {
+                    samplers.add(() -> sampleColumn(column));
+                }
+                List<java.util.concurrent.Future<BlockPos>> results =
+                        AsyncLocate.sharedMathPool().invokeAll(samplers);
+                columns += batch.size();
+                for (int i = 0; i < batch.size() && hits.size() < count; i++) {
+                    BlockPos found;
+                    try {
+                        found = results.get(i).get();
+                    } catch (java.util.concurrent.ExecutionException e) {
+                        LOGGER.warn("Biome sample failed at {}", batch.get(i), e.getCause());
+                        continue;
+                    }
+                    if (found != null && farEnough(hits, batch.get(i), separationSqr)) {
+                        Hit hit = new Hit(found, batch.get(i).distSqr());
                         hits.add(hit);
                         streamHit(hits.size(), hit);
                     }
+                }
+                if ((System.nanoTime() - startNanos) / 1_000_000L > wallClockMs) {
                     break;
                 }
-                if ((columns & 255) == 0) {
-                    if ((System.nanoTime() - startNanos) / 1_000_000L > wallClockMs) {
-                        break;
-                    }
-                    pushProgress(hits.size(), columns, startNanos);
-                }
+                pushProgress(hits.size(), columns, startNanos);
             }
             return hits;
+        }
+
+        /** Vanilla's column scan: y out from the player's own height, first
+         * match wins the column. Runs on the math pool. When the climate
+         * probe passed, the five 2D climate values are computed once and
+         * only depth per y (see columnConstantClimate); coordinates are
+         * quart-aligned exactly as Sampler.sample would, so the shortcut is
+         * bit-identical to the plain path wherever the referee looks. */
+        private BlockPos sampleColumn(Column column) {
+            int noiseX = QuartPos.fromBlock(column.x());
+            int noiseZ = QuartPos.fromBlock(column.z());
+            if (multiNoise == null || !CLIMATE_TRUSTED.get()) {
+                return sampleColumnPlain(column, noiseX, noiseZ);
+            }
+            int blockX = QuartPos.toBlock(noiseX);
+            int blockZ = QuartPos.toBlock(noiseZ);
+            DensityFunction.SinglePointContext flat = new DensityFunction.SinglePointContext(
+                    blockX, QuartPos.toBlock(QuartPos.fromBlock(sampleYs[0])), blockZ);
+            float temperature = (float) sampler.temperature().compute(flat);
+            float humidity = (float) sampler.humidity().compute(flat);
+            float continentalness = (float) sampler.continentalness().compute(flat);
+            float erosion = (float) sampler.erosion().compute(flat);
+            float weirdness = (float) sampler.weirdness().compute(flat);
+            // Deterministic 1-in-64 standing referee: these columns also run
+            // the plain sampler and must agree, or the shortcut is revoked.
+            boolean referee = ((noiseX ^ noiseZ) & 63) == 0;
+            for (int y : sampleYs) {
+                int blockY = QuartPos.toBlock(QuartPos.fromBlock(y));
+                float depth = (float) sampler.depth().compute(
+                        new DensityFunction.SinglePointContext(blockX, blockY, blockZ));
+                Holder<Biome> biome = multiNoise.getNoiseBiome(Climate.target(
+                        temperature, humidity, continentalness, erosion, depth, weirdness));
+                if (referee) {
+                    Holder<Biome> plain = biomeSource.getNoiseBiome(
+                            noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                    if (plain != biome) {
+                        CLIMATE_TRUSTED.set(false);
+                        if (CLIMATE_WARNED.compareAndSet(false, true)) {
+                            LOGGER.warn("Climate referee disagreement at column {},{} y {} in {}: the "
+                                            + "column-constant shortcut predicted {} but the full sampler "
+                                            + "says {}. The shortcut is disabled for this session; results "
+                                            + "stay correct, but please report this line.",
+                                    column.x(), column.z(), y, dimension.identifier(), biome, plain);
+                        }
+                        return sampleColumnPlain(column, noiseX, noiseZ);
+                    }
+                }
+                if (candidates.contains(biome)) {
+                    return new BlockPos(column.x(), y, column.z());
+                }
+            }
+            return null;
+        }
+
+        private BlockPos sampleColumnPlain(Column column, int noiseX, int noiseZ) {
+            for (int y : sampleYs) {
+                Holder<Biome> biome = biomeSource.getNoiseBiome(
+                        noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                if (candidates.contains(biome)) {
+                    return new BlockPos(column.x(), y, column.z());
+                }
+            }
+            return null;
         }
 
         private void pushRing(int ring, PriorityQueue<Column> queue) {

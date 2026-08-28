@@ -112,6 +112,11 @@ public final class AsyncLocate {
     private static final int MAX_PENDING_SHADOWS = 16;
     private static ExecutorService mathPool;
 
+    /** The biome engine samples on the same pool; see BiomeLocate. */
+    static ExecutorService sharedMathPool() {
+        return mathPool();
+    }
+
     private static synchronized ExecutorService mathPool() {
         if (mathPool == null || mathPool.isShutdown()) {
             java.util.concurrent.atomic.AtomicInteger n = new java.util.concurrent.atomic.AtomicInteger();
