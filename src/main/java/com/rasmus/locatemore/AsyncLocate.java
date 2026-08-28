@@ -576,6 +576,13 @@ public final class AsyncLocate {
                 pending.result.complete(null);
                 continue;
             }
+            if (pending.candidate.distSqr() > pending.task.mootBeyondSqr) {
+                // Provably cannot affect the output; dropping it saves the
+                // probe generation and its save growth. Deliberately NOT
+                // counted as unresolved - ordering is unaffected.
+                pending.result.complete(null);
+                continue;
+            }
             ServerLevel level = server.getLevel(pending.task.dimension);
             if (level == null) {
                 pending.result.complete(null);
@@ -712,6 +719,15 @@ public final class AsyncLocate {
         final java.util.Set<LocateMore.DedupKey> preExcluded = new java.util.HashSet<>();
 
         final AtomicBoolean aborted;
+        /** Released by every shadow and load completion, so the worker wakes
+         * the moment a dependency resolves instead of polling on a 5 ms
+         * sleep; pure latency, results untouched. */
+        final java.util.concurrent.Semaphore wake = new java.util.concurrent.Semaphore(0);
+        /** Loads whose candidate is farther than this provably cannot change
+         * the output (enough nearer distinct verified hits are locked in);
+         * the pump drops them before issuing. Volatile: written by the
+         * worker, read on the server thread. */
+        volatile long mootBeyondSqr = Long.MAX_VALUE;
         /** Candidates lost to resolution failure or the probe-generation switch. */
         final java.util.concurrent.atomic.AtomicInteger unresolved = new java.util.concurrent.atomic.AtomicInteger();
         /** Set when the search ends normally, so leftover pending loads are dropped. */
@@ -834,6 +850,7 @@ public final class AsyncLocate {
             // only once nothing in flight could still rank ahead of them.
             List<PendingShadow> shadows = new ArrayList<>();
             List<PendingLoad> pending = new ArrayList<>();
+            List<AwaitingLoad> awaitingLoad = new ArrayList<>();
             PriorityQueue<LocateMore.Candidate> buffered =
                     new PriorityQueue<>(Comparator.comparingLong(LocateMore.Candidate::distSqr));
             int checked = 0;
@@ -857,7 +874,16 @@ public final class AsyncLocate {
                         continue;
                     }
                     if (done != null && done.shadow().needsLoad() && pending.size() >= MAX_PENDING_LOADS) {
-                        continue; // defer: keeps the pending bound hard
+                        if (awaitingLoad.size() >= MAX_PENDING_LOADS) {
+                            continue; // both bounds full: defer in place
+                        }
+                        // Move aside instead of occupying a shadow slot, so
+                        // the math pool keeps scanning while loads drain
+                        // (removes the head-of-line stall on fallback paths).
+                        iterator.remove();
+                        stats.merge(done.scratch());
+                        awaitingLoad.add(new AwaitingLoad(shadow.candidate(), done.shadow()));
+                        continue;
                     }
                     iterator.remove();
                     if (done == null) {
@@ -869,6 +895,7 @@ public final class AsyncLocate {
                         stats.loads++;
                         PendingLoad load = new PendingLoad(this, candidate, done.shadow().knownAbsent(),
                                 done.shadow().predictedWinner());
+                        load.result.whenComplete((r, t) -> wake.release());
                         pending.add(load);
                         INCOMING_LOADS.add(load);
                         // Kick the pump now instead of waiting for the tick
@@ -906,11 +933,23 @@ public final class AsyncLocate {
                         }
                     }
                 }
+                // Freed load slots admit the waiting shadows first.
+                while (!awaitingLoad.isEmpty() && pending.size() < MAX_PENDING_LOADS) {
+                    AwaitingLoad next = awaitingLoad.remove(0);
+                    stats.loads++;
+                    PendingLoad load = new PendingLoad(this, next.candidate(),
+                            next.shadow().knownAbsent(), next.shadow().predictedWinner());
+                    load.result.whenComplete((r, t) -> wake.release());
+                    pending.add(load);
+                    INCOMING_LOADS.add(load);
+                    server.execute(() -> pumpLoads(server));
+                }
                 // Finalize buffered hits that nothing in flight can outrank.
                 // The queue head is part of the barrier: dispatch order is
                 // monotone, so it only ever bites after a legacy re-queue
                 // inserted a corrected key below already-dispatched ones.
-                drainBuffered(queue, shadows, pending, buffered, hits, seen);
+                drainBuffered(queue, shadows, pending, awaitingLoad, buffered, hits, seen);
+                mootBeyondSqr = mootFence(hits, buffered, seen);
                 if (hits.size() >= count) {
                     break;
                 }
@@ -919,9 +958,10 @@ public final class AsyncLocate {
                     break;
                 }
                 // Backpressure: bound speculation (and probe-chunk creation).
-                if (shadows.size() >= MAX_PENDING_SHADOWS || pending.size() >= MAX_PENDING_LOADS) {
+                if (shadows.size() >= MAX_PENDING_SHADOWS
+                        || pending.size() + awaitingLoad.size() >= MAX_PENDING_LOADS * 2) {
                     pushProgress(hits.size(), checked, startNanos);
-                    Thread.sleep(5L);
+                    awaitCompletion();
                     continue;
                 }
                 while (LocateMore.pushDueRings(sources, queue, seed, origin, maxDistSqr)) {
@@ -934,10 +974,11 @@ public final class AsyncLocate {
                     }
                 }
                 if (queue.isEmpty() || queue.peek().distSqr() > maxDistSqr) {
-                    if (shadows.isEmpty() && pending.isEmpty() && buffered.isEmpty()) {
+                    if (shadows.isEmpty() && pending.isEmpty() && awaitingLoad.isEmpty()
+                            && buffered.isEmpty()) {
                         break;
                     }
-                    Thread.sleep(5L);
+                    awaitCompletion();
                     continue;
                 }
                 LocateMore.Candidate candidate = queue.poll();
@@ -946,18 +987,60 @@ public final class AsyncLocate {
                     continue;
                 }
                 checked++;
-                shadows.add(new PendingShadow(candidate, dispatchShadow(candidate)));
+                CompletableFuture<ShadowDone> shadowFuture = dispatchShadow(candidate);
+                shadowFuture.whenComplete((r, t) -> wake.release());
+                shadows.add(new PendingShadow(candidate, shadowFuture));
                 pushProgress(hits.size(), checked, startNanos);
             }
             // Budget/count exits: verified hits that nothing still in flight
             // (or still queued) can outrank are results, not waste.
             if (!aborted.get()) {
-                drainBuffered(queue, shadows, pending, buffered, hits, seen);
+                drainBuffered(queue, shadows, pending, awaitingLoad, buffered, hits, seen);
             }
             return hits;
         }
 
         private record PendingShadow(LocateMore.Candidate candidate, CompletableFuture<ShadowDone> future) {
+        }
+
+        /** A shadow verdict waiting for a free load slot; out of the shadow
+         * window so scanning continues, inside the barrier so ordering holds. */
+        private record AwaitingLoad(LocateMore.Candidate candidate, Shadow shadow) {
+        }
+
+        /** Wait for any completion signal (bounded, in case a signal was
+         * consumed by a previous wait), then drain stale permits. */
+        private void awaitCompletion() throws InterruptedException {
+            wake.tryAcquire(50L, TimeUnit.MILLISECONDS);
+            wake.drainPermits();
+        }
+
+        /**
+         * The largest distance a queued load must still be resolved for: the
+         * needed-th smallest among DISTINCT not-yet-seen verified buffered
+         * hits (dedup-aware, because a buffered hit that later dedups away
+         * must not fence out the load that would have replaced it). MAX_VALUE
+         * when not enough are locked in; -1 fences everything (count reached).
+         */
+        private long mootFence(List<LocateMore.Hit> hits,
+                PriorityQueue<LocateMore.Candidate> buffered, Set<LocateMore.DedupKey> seen) {
+            int needed = count - hits.size();
+            if (needed <= 0) {
+                return -1;
+            }
+            Set<LocateMore.DedupKey> distinct = new HashSet<>(seen);
+            List<Long> locked = new ArrayList<>();
+            for (LocateMore.Candidate candidate : buffered) {
+                LocateMore.VerifyResult found = candidate.resolved();
+                if (distinct.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))) {
+                    locked.add(candidate.distSqr());
+                }
+            }
+            if (locked.size() < needed) {
+                return Long.MAX_VALUE;
+            }
+            locked.sort(null);
+            return locked.get(needed - 1);
         }
 
         private record ShadowDone(Shadow shadow, LocateMore.Stats scratch) {
@@ -971,6 +1054,7 @@ public final class AsyncLocate {
          */
         private void drainBuffered(PriorityQueue<LocateMore.Candidate> queue,
                 List<PendingShadow> shadows, List<PendingLoad> pending,
+                List<AwaitingLoad> awaitingLoad,
                 PriorityQueue<LocateMore.Candidate> buffered,
                 List<LocateMore.Hit> hits, Set<LocateMore.DedupKey> seen) {
             long barrier = queue.isEmpty() ? Long.MAX_VALUE : queue.peek().distSqr();
@@ -979,6 +1063,9 @@ public final class AsyncLocate {
             }
             for (PendingLoad load : pending) {
                 barrier = Math.min(barrier, load.candidate.distSqr());
+            }
+            for (AwaitingLoad waiting : awaitingLoad) {
+                barrier = Math.min(barrier, waiting.candidate().distSqr());
             }
             while (!buffered.isEmpty() && buffered.peek().distSqr() <= barrier && hits.size() < count) {
                 LocateMore.Candidate done = buffered.poll();
