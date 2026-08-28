@@ -35,6 +35,12 @@ public final class TravelTracker {
 
     public static void init() {
         ServerTickEvents.END_SERVER_TICK.register(TravelTracker::tick);
+        // Static state outlives the integrated server: without this, a
+        // tracker armed in one singleplayer world kept pointing at its
+        // coordinates in the NEXT world opened in the same session (same
+        // player UUID, interned dimension key - every check passed).
+        net.fabricmc.fabric.api.event.lifecycle.v1.ServerLifecycleEvents.SERVER_STOPPING
+                .register(server -> TRACKING.clear());
     }
 
     public static void track(ServerPlayer player, BlockPos pos, String name) {
