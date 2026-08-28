@@ -169,9 +169,12 @@ public final class BiomeLocate {
                         && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
                         ? mn : null;
         Prefilter prefilter = buildPrefilter(multiNoise, candidates);
-        Task task = new Task(source.getServer(), level.dimension(), source,
+        AtomicBoolean abortFlag = new AtomicBoolean();
+        SearchSession session = new SearchSession(source.getServer(), level.dimension(), source,
+                printable, abortFlag::get);
+        Task task = new Task(source.getServer(), level.dimension(), session, abortFlag,
                 source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console-biome",
-                printable, candidates, count, origin, sampleYs,
+                candidates, count, origin, sampleYs,
                 biomeSource, sampler, multiNoise, prefilter);
 
         LOGGER.debug("Biome search {} ({}): climate shortcut {}, prefilter {}", printable,
@@ -188,7 +191,7 @@ public final class BiomeLocate {
                 : "Searching for the " + count + " nearest " + printable + "…")
                 .withStyle(ChatFormatting.GRAY), false);
         if (source.getEntity() instanceof ServerPlayer player) {
-            task.attachBossBar(player);
+            session.attachBossBar(player);
         }
         ACTIVE.put(task.key, task);
         workerExecutor().execute(task::run);
@@ -336,9 +339,8 @@ public final class BiomeLocate {
     private static final class Task {
         final MinecraftServer server;
         final ResourceKey<Level> dimension;
-        final CommandSourceStack source;
+        final SearchSession session;
         final Object key;
-        final String printable;
         final Set<Holder<Biome>> candidates;
         final int count;
         final BlockPos origin;
@@ -349,21 +351,19 @@ public final class BiomeLocate {
         final MultiNoiseBiomeSource multiNoise;
         /** Non-null only when a discriminating dimension exists; see Prefilter. */
         final Prefilter prefilter;
-        final UUID playerId;
 
-        final AtomicBoolean aborted = new AtomicBoolean();
-        private volatile ServerBossEvent bossBar;
-        private long lastProgressPush;
+        final AtomicBoolean aborted;
 
-        Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
-                String printable, Set<Holder<Biome>> candidates, int count, BlockPos origin, int[] sampleYs,
+        Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
+                AtomicBoolean aborted, Object key,
+                Set<Holder<Biome>> candidates, int count, BlockPos origin, int[] sampleYs,
                 BiomeSource biomeSource, Climate.Sampler sampler, MultiNoiseBiomeSource multiNoise,
                 Prefilter prefilter) {
             this.server = server;
             this.dimension = dimension;
-            this.source = source;
+            this.session = session;
+            this.aborted = aborted;
             this.key = key;
-            this.printable = printable;
             this.candidates = candidates;
             this.count = count;
             this.origin = origin;
@@ -372,26 +372,11 @@ public final class BiomeLocate {
             this.sampler = sampler;
             this.multiNoise = multiNoise;
             this.prefilter = prefilter;
-            this.playerId = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : null;
-        }
-
-        void attachBossBar(ServerPlayer player) {
-            bossBar = new ServerBossEvent(UUID.randomUUID(), Component.literal("Locating " + printable),
-                    BossEvent.BossBarColor.GREEN, BossEvent.BossBarOverlay.PROGRESS);
-            bossBar.setProgress(0.0F);
-            bossBar.addPlayer(player);
         }
 
         void abort() {
             if (aborted.compareAndSet(false, true)) {
-                server.execute(this::removeBossBar);
-            }
-        }
-
-        private void removeBossBar() {
-            if (bossBar != null) {
-                bossBar.removeAllPlayers();
-                bossBar = null;
+                session.closeBossBar();
             }
         }
 
@@ -409,7 +394,7 @@ public final class BiomeLocate {
                 }
             } finally {
                 ACTIVE.remove(key, this);
-                server.execute(this::removeBossBar);
+                session.closeBossBar();
             }
         }
 
@@ -667,12 +652,7 @@ public final class BiomeLocate {
         }
 
         private void streamHit(int number, Hit hit) {
-            server.execute(() -> {
-                if (aborted.get() || !stillDeliverable()) {
-                    return;
-                }
-                source.sendSuccess(() -> hitLine(number, hit.pos(), hit.distSqr(), printable), false);
-            });
+            session.chat(() -> hitLine(number, hit.pos(), hit.distSqr(), session.printable));
         }
 
         /**
@@ -697,55 +677,33 @@ public final class BiomeLocate {
         }
 
         private void pushProgress(int found, long columns, long startNanos) {
-            long now = System.currentTimeMillis();
-            if (bossBar == null || now - lastProgressPush < 500L) {
-                return;
-            }
-            lastProgressPush = now;
             long elapsed = (System.nanoTime() - startNanos) / 1_000_000_000L;
-            float progress = Math.min(1.0F, found / (float) count);
-            final long sampled = columns;
-            server.execute(() -> {
-                if (bossBar != null && !aborted.get()) {
-                    bossBar.setProgress(progress);
-                    bossBar.setName(Component.literal("Locating " + printable + ": " + found + "/" + count
-                            + " found, " + sampled + " columns, " + elapsed + " s"));
-                }
-            });
+            session.progress(Math.min(1.0F, found / (float) count),
+                    () -> "Locating " + session.printable + ": " + found + "/" + count
+                            + " found, " + columns + " columns, " + elapsed + " s");
         }
 
         private void finish(List<Hit> hits, long startNanos, Throwable error) {
             long tookMs = (System.nanoTime() - startNanos) / 1_000_000L;
-            server.execute(() -> {
-                removeBossBar();
-                if (!stillDeliverable()) {
-                    return;
-                }
-                if (error != null) {
-                    source.sendFailure(Component.literal("Search failed: "
-                            + error.getClass().getSimpleName() + " (see log)"));
-                    return;
-                }
-                if (hits.isEmpty()) {
-                    source.sendFailure(Component.translatableEscape("commands.locate.biome.not_found", printable));
-                    return;
-                }
-                String note = hits.size() < count
-                        ? " - only " + hits.size() + " of " + count + " within "
-                                + Config.biomeMaxDistanceBlocks() + " blocks/budget" : "";
-                final String line = (count == 1 && hits.size() == 1
-                        ? "Nearest " + printable
-                        : hits.size() + " nearest " + printable)
-                        + " (" + tookMs + " ms" + note + ")";
-                source.sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.GRAY), false);
-            });
-        }
-
-        private boolean stillDeliverable() {
-            if (!server.isRunning() || server.getLevel(dimension) == null) {
-                return false;
+            session.closeBossBar();
+            if (error != null) {
+                session.fail(Component.literal("Search failed: "
+                        + error.getClass().getSimpleName() + " (see log)"));
+                return;
             }
-            return playerId == null || server.getPlayerList().getPlayer(playerId) != null;
+            if (hits.isEmpty()) {
+                session.fail(Component.translatableEscape(
+                        "commands.locate.biome.not_found", session.printable));
+                return;
+            }
+            String note = hits.size() < count
+                    ? " - only " + hits.size() + " of " + count + " within "
+                            + Config.biomeMaxDistanceBlocks() + " blocks/budget" : "";
+            final String line = (count == 1 && hits.size() == 1
+                    ? "Nearest " + session.printable
+                    : hits.size() + " nearest " + session.printable)
+                    + " (" + tookMs + " ms" + note + ")";
+            session.chat(() -> Component.literal(line).withStyle(ChatFormatting.GRAY));
         }
     }
 }

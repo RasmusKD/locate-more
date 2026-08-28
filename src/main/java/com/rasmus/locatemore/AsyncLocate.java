@@ -228,7 +228,7 @@ public final class AsyncLocate {
                 : "Searching for the " + count + " nearest " + printable + "…")
                 .withStyle(ChatFormatting.GRAY), false);
         if (source.getEntity() instanceof ServerPlayer player) {
-            task.attachBossBar(player);
+            task.session.attachBossBar(player);
         }
         submit(task, true);
         return 1;
@@ -345,7 +345,10 @@ public final class AsyncLocate {
             setByPlacement.put(setHolder.value().placement(), setHolder);
         }
 
-        Task built = new Task(server, level.dimension(), source, key, printable, holders, count, origin,
+        AtomicBoolean abortFlag = new AtomicBoolean();
+        SearchSession session = new SearchSession(server, level.dimension(), source,
+                printable, abortFlag::get);
+        Task built = new Task(server, level.dimension(), session, abortFlag, key, holders, count, origin,
                 state, setByPlacement,
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
@@ -680,9 +683,8 @@ public final class AsyncLocate {
     private static final class Task {
         final MinecraftServer server;
         final ResourceKey<Level> dimension;
-        final CommandSourceStack source;
+        final SearchSession session;
         final Object key;
-        final String printable;
         final HolderSet<Structure> holders;
         final int count;
         final BlockPos origin;
@@ -691,8 +693,6 @@ public final class AsyncLocate {
         final Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement;
         final Map<StructurePlacement, Set<Holder<Structure>>> byPlacement;
         final List<LocateMore.Candidate> concentric;
-        /** Deliverability key: results are dropped once this player is gone. */
-        final UUID playerId;
 
         // Captured for the shadow check; all safe off-thread per the audit.
         final RegistryAccess registryAccess;
@@ -711,7 +711,7 @@ public final class AsyncLocate {
         boolean allowGeneration = Config.allowProbeChunkGeneration();
         final java.util.Set<LocateMore.DedupKey> preExcluded = new java.util.HashSet<>();
 
-        final AtomicBoolean aborted = new AtomicBoolean();
+        final AtomicBoolean aborted;
         /** Candidates lost to resolution failure or the probe-generation switch. */
         final java.util.concurrent.atomic.AtomicInteger unresolved = new java.util.concurrent.atomic.AtomicInteger();
         /** Set when the search ends normally, so leftover pending loads are dropped. */
@@ -732,11 +732,10 @@ public final class AsyncLocate {
         volatile CompletableFuture<LocateMoreApi.SearchResult> apiSink;
         /** Regions with chunk data on disk; null means unknown, scan everything. */
         private RegionCatalog regions;
-        private volatile ServerBossEvent bossBar;
-        private long lastProgressPush;
 
-        Task(MinecraftServer server, ResourceKey<Level> dimension, CommandSourceStack source, Object key,
-                String printable, HolderSet<Structure> holders, int count, BlockPos origin,
+        Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
+                AtomicBoolean aborted, Object key,
+                HolderSet<Structure> holders, int count, BlockPos origin,
                 ChunkGeneratorStructureState state, Map<StructurePlacement, net.minecraft.core.Holder<net.minecraft.world.level.levelgen.structure.StructureSet>> setByPlacement,
                 Map<StructurePlacement, Set<Holder<Structure>>> byPlacement, List<LocateMore.Candidate> concentric,
                 RegistryAccess registryAccess, ChunkGenerator generator, BiomeSource biomeSource,
@@ -744,9 +743,9 @@ public final class AsyncLocate {
                 ChunkScanAccess scanAccess, DataFixer fixer, long seed) {
             this.server = server;
             this.dimension = dimension;
-            this.source = source;
+            this.session = session;
+            this.aborted = aborted;
             this.key = key;
-            this.printable = printable;
             this.holders = holders;
             this.count = count;
             this.origin = origin;
@@ -763,37 +762,21 @@ public final class AsyncLocate {
             this.scanAccess = scanAccess;
             this.fixer = fixer;
             this.seed = seed;
-            this.playerId = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : null;
-        }
-
-        void attachBossBar(ServerPlayer player) {
-            bossBar = new ServerBossEvent(UUID.randomUUID(), Component.literal("Locating " + printable),
-                    BossEvent.BossBarColor.GREEN, BossEvent.BossBarOverlay.PROGRESS);
-            bossBar.setProgress(0.0F);
-            bossBar.addPlayer(player);
         }
 
         void failEarly(String reason) {
             if (apiSink != null) {
                 apiSink.completeExceptionally(new IllegalStateException(reason));
             } else {
-                server.execute(() -> {
-                    if (stillDeliverable()) {
-                        source.sendFailure(Component.literal(reason));
-                    }
-                });
+                session.fail(Component.literal(reason));
             }
         }
 
         void notifyQueued(int position) {
             if (apiSink == null) {
-                server.execute(() -> {
-                    if (stillDeliverable()) {
-                        source.sendSuccess(() -> Component.literal(
-                                "All workers busy; queued at position " + position + ".")
-                                .withStyle(ChatFormatting.GRAY), false);
-                    }
-                });
+                session.chat(() -> Component.literal(
+                        "All workers busy; queued at position " + position + ".")
+                        .withStyle(ChatFormatting.GRAY));
             }
         }
 
@@ -803,14 +786,7 @@ public final class AsyncLocate {
                     apiSink.completeExceptionally(
                             new java.util.concurrent.CancellationException("Search aborted"));
                 }
-                server.execute(this::removeBossBar);
-            }
-        }
-
-        private void removeBossBar() {
-            if (bossBar != null) {
-                bossBar.removeAllPlayers();
-                bossBar = null;
+                session.closeBossBar();
             }
         }
 
@@ -829,7 +805,7 @@ public final class AsyncLocate {
             } finally {
                 completed = true;
                 ACTIVE.remove(key, this);
-                server.execute(this::removeBossBar);
+                session.closeBossBar();
                 admitNext();
             }
         }
@@ -1182,29 +1158,14 @@ public final class AsyncLocate {
             if (apiSink != null) {
                 return;
             }
-            server.execute(() -> {
-                if (aborted.get() || !stillDeliverable()) {
-                    return;
-                }
-                source.sendSuccess(() -> LocateMore.hitLine(number, hit, printable), false);
-            });
+            session.chat(() -> LocateMore.hitLine(number, hit, session.printable));
         }
 
         private void pushProgress(int found, int checked, long startNanos) {
-            long now = System.currentTimeMillis();
-            if (bossBar == null || now - lastProgressPush < 500L) {
-                return;
-            }
-            lastProgressPush = now;
             long elapsed = (System.nanoTime() - startNanos) / 1_000_000_000L;
-            float progress = Math.min(1.0F, found / (float) count);
-            server.execute(() -> {
-                if (bossBar != null && !aborted.get()) {
-                    bossBar.setProgress(progress);
-                    bossBar.setName(Component.literal("Locating " + printable + ": " + found + "/" + count
-                            + " found, " + checked + " checked, " + elapsed + " s"));
-                }
-            });
+            session.progress(Math.min(1.0F, found / (float) count),
+                    () -> "Locating " + session.printable + ": " + found + "/" + count
+                            + " found, " + checked + " checked, " + elapsed + " s");
         }
 
         private void finish(List<LocateMore.Hit> hits, long startNanos, Throwable error) {
@@ -1214,7 +1175,7 @@ public final class AsyncLocate {
                 // (full agreement is deliberately not "interesting"), so the
                 // evidence lands in the log where the operator collects it.
                 LOGGER.info("On-disk draw sample: {}/{} predictions matched already-generated chunks ({}).",
-                        stats.drawSeenHits, stats.drawSeen, printable);
+                        stats.drawSeenHits, stats.drawSeen, session.printable);
             }
             // API futures complete directly: routing them through the server
             // executor could drop the completion on a stopping server, and a
@@ -1223,7 +1184,7 @@ public final class AsyncLocate {
             // server thread" holds on every path except server shutdown,
             // where completing at all is the contract that matters.
             if (apiSink != null) {
-                server.execute(this::removeBossBar);
+                session.closeBossBar();
                 if (error != null) {
                     apiSink.completeExceptionally(error);
                     return;
@@ -1245,21 +1206,18 @@ public final class AsyncLocate {
                         .execute(() -> sink.complete(result));
                 return;
             }
-            server.execute(() -> {
-                removeBossBar();
-                if (!stillDeliverable()) {
-                    return;
-                }
-                if (error != null) {
-                    source.sendFailure(Component.literal("Search failed: " + error.getClass().getSimpleName()
-                            + " (see log)"));
-                    return;
-                }
-                if (hits.isEmpty()) {
-                    source.sendFailure(Component.literal("No " + printable + " found within "
-                            + maxDistBlocks + " blocks."));
-                    return;
-                }
+            session.closeBossBar();
+            if (error != null) {
+                session.fail(Component.literal("Search failed: " + error.getClass().getSimpleName()
+                        + " (see log)"));
+                return;
+            }
+            if (hits.isEmpty()) {
+                session.fail(Component.literal("No " + session.printable + " found within "
+                        + maxDistBlocks + " blocks."));
+                return;
+            }
+            {
                 // A clean search earns a quiet line; the counters only appear when
                 // they explain something (chunk work, partial results, or a
                 // referee disagreement).
@@ -1288,18 +1246,11 @@ public final class AsyncLocate {
                             + " memoHits=" + stats.memoHits + avoided + "]" + mathNote + note + probeNote;
                 }
                 final String line = (count == 1 && hits.size() == 1
-                        ? "Nearest " + printable
-                        : hits.size() + " nearest " + printable)
+                        ? "Nearest " + session.printable
+                        : hits.size() + " nearest " + session.printable)
                         + " (" + tookMs + " ms" + detail + ")";
-                source.sendSuccess(() -> Component.literal(line).withStyle(ChatFormatting.GRAY), false);
-            });
-        }
-
-        private boolean stillDeliverable() {
-            if (!server.isRunning() || server.getLevel(dimension) == null) {
-                return false;
+                session.chat(() -> Component.literal(line).withStyle(ChatFormatting.GRAY));
             }
-            return playerId == null || server.getPlayerList().getPlayer(playerId) != null;
         }
     }
 }
