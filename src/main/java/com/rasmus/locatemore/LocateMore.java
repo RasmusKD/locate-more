@@ -125,6 +125,7 @@ public class LocateMore implements ModInitializer {
         AsyncLocate.init();
         BiomeLocate.init();
         PoiLocate.init();
+        Marks.init();
         TravelTracker.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher, ctx));
         LOGGER.info("Vanilla /locate, eyes of ender, and other mods now return the true nearest "
@@ -140,6 +141,7 @@ public class LocateMore implements ModInitializer {
             LOGGER.warn("Could not find the vanilla /locate command; count arguments not registered");
             return;
         }
+        graftSubcommands(locate, buildContext);
         // Each graft fails independently: a conflict on the structure node
         // must not cost the biome node its count argument, or vice versa.
         CommandNode<CommandSourceStack> structureLiteral = locate.getChild("structure");
@@ -226,6 +228,13 @@ public class LocateMore implements ModInitializer {
                 "locatemore." + node, net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS);
     }
 
+    /**
+     * Every subcommand registers twice: under /locatemore, whose nodes a
+     * permissions mod can grant individually, and grafted onto vanilla's
+     * /locate root as the default spelling. The alias cannot replace the
+     * granular route: vanilla's /locate root requires op level 2 before
+     * any child is consulted.
+     */
     private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher,
             net.minecraft.commands.CommandBuildContext buildContext) {
         var track = perm("track");
@@ -233,77 +242,125 @@ public class LocateMore implements ModInitializer {
         var prune = perm("prune");
         var verify = perm("verify");
         var near = perm("near");
+        var mark = perm("mark");
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
                 // The root shows up whenever any subcommand would.
                 .requires(source -> track.test(source) || compass.test(source)
-                        || prune.test(source) || verify.test(source) || near.test(source))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("near")
-                        .requires(near)
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
-                                .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
-                                                "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
-                                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
-                                                .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
-                                                                "other", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
-                                                        .executes(NearSearch::structureNearStructure)
-                                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
-                                                                        "radius", IntegerArgumentType.integer(32, 2048))
-                                                                .executes(NearSearch::structureNearStructure))))
-                                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
-                                                .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
-                                                                "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
-                                                        .executes(NearSearch::structureNearBiome)
-                                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
-                                                                        "radius", IntegerArgumentType.integer(32, 2048))
-                                                                .executes(NearSearch::structureNearBiome))))))
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
-                                .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
-                                                "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
-                                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
-                                                .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
-                                                                "other", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
-                                                        .executes(NearSearch::biomeNearBiome)
-                                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
-                                                                        "radius", IntegerArgumentType.integer(32, 2048))
-                                                                .executes(NearSearch::biomeNearBiome)))))))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("track")
-                        .requires(track)
-                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
-                            if (ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player
-                                    && TravelTracker.stop(player)) {
-                                ctx.getSource().sendSuccess(() -> Component.literal("Tracking stopped.")
-                                        .withStyle(ChatFormatting.GRAY), false);
-                            }
-                            return 1;
-                        }))
-                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
-                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
-                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())
-                                                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
-                                                                com.mojang.brigadier.arguments.StringArgumentType.greedyString())
-                                                        .executes(ctx -> {
-                                                            if (ctx.getSource().getEntity()
-                                                                    instanceof net.minecraft.server.level.ServerPlayer player) {
-                                                                TravelTracker.track(player, new BlockPos(
-                                                                                IntegerArgumentType.getInteger(ctx, "x"),
-                                                                                IntegerArgumentType.getInteger(ctx, "y"),
-                                                                                IntegerArgumentType.getInteger(ctx, "z")),
-                                                                        com.mojang.brigadier.arguments.StringArgumentType
-                                                                                .getString(ctx, "name"));
-                                                            }
-                                                            return 1;
-                                                        }))))))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("compass")
-                        .requires(compass)
-                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
-                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
-                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())
-                                                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
-                                                                com.mojang.brigadier.arguments.StringArgumentType.greedyString())
-                                                        .executes(HitPresentation::giveCompass))))))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("prune")
-                        .requires(prune)
-                        .executes(ctx -> {
+                        || prune.test(source) || verify.test(source) || near.test(source)
+                        || mark.test(source))
+                .then(nearTree(buildContext).requires(near))
+                .then(trackTree().requires(track))
+                .then(compassTree().requires(compass))
+                .then(markTree().requires(mark))
+                .then(pruneTree().requires(prune))
+                .then(verifyTree().requires(verify)));
+    }
+
+    private static void graftSubcommands(CommandNode<CommandSourceStack> locate,
+            net.minecraft.commands.CommandBuildContext buildContext) {
+        graftAlias(locate, "near", nearTree(buildContext).requires(perm("near")));
+        graftAlias(locate, "track", trackTree().requires(perm("track")));
+        graftAlias(locate, "compass", compassTree().requires(perm("compass")));
+        graftAlias(locate, "mark", markTree().requires(perm("mark")));
+        graftAlias(locate, "prune", pruneTree().requires(perm("prune")));
+        graftAlias(locate, "verify", verifyTree().requires(perm("verify")));
+    }
+
+    private static void graftAlias(CommandNode<CommandSourceStack> locate, String name,
+            LiteralArgumentBuilder<CommandSourceStack> tree) {
+        if (locate.getChild(name) != null) {
+            LOGGER.warn("/locate already has a '{}' subcommand; alias skipped", name);
+            return;
+        }
+        locate.addChild(tree.build());
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> nearTree(
+            net.minecraft.commands.CommandBuildContext buildContext) {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("near")
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                        "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
+                                        .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                                        "other", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                                .executes(NearSearch::structureNearStructure)
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                                "radius", IntegerArgumentType.integer(32, 2048))
+                                                        .executes(NearSearch::structureNearStructure))))
+                                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
+                                        .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
+                                                        "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                                .executes(NearSearch::structureNearBiome)
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                                "radius", IntegerArgumentType.integer(32, 2048))
+                                                        .executes(NearSearch::structureNearBiome))))))
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
+                                        "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
+                                        .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
+                                                        "other", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                                .executes(NearSearch::biomeNearBiome)
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                                "radius", IntegerArgumentType.integer(32, 2048))
+                                                        .executes(NearSearch::biomeNearBiome))))));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> trackTree() {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("track")
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
+                    if (ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player
+                            && TravelTracker.stop(player)) {
+                        ctx.getSource().sendSuccess(() -> Component.literal("Tracking stopped.")
+                                .withStyle(ChatFormatting.GRAY), false);
+                    }
+                    return 1;
+                }))
+                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
+                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())
+                                        .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
+                                                        com.mojang.brigadier.arguments.StringArgumentType.greedyString())
+                                                .executes(ctx -> {
+                                                    if (ctx.getSource().getEntity()
+                                                            instanceof net.minecraft.server.level.ServerPlayer player) {
+                                                        TravelTracker.track(player, new BlockPos(
+                                                                        IntegerArgumentType.getInteger(ctx, "x"),
+                                                                        IntegerArgumentType.getInteger(ctx, "y"),
+                                                                        IntegerArgumentType.getInteger(ctx, "z")),
+                                                                com.mojang.brigadier.arguments.StringArgumentType
+                                                                        .getString(ctx, "name"));
+                                                    }
+                                                    return 1;
+                                                })))));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> compassTree() {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("compass")
+                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
+                                .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())
+                                        .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
+                                                        com.mojang.brigadier.arguments.StringArgumentType.greedyString())
+                                                .executes(HitPresentation::giveCompass)))));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> markTree() {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("mark")
+                .executes(Marks::list)
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("remove")
+                        .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
+                                        com.mojang.brigadier.arguments.StringArgumentType.word())
+                                .executes(Marks::remove)))
+                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
+                                com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .executes(Marks::set));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> pruneTree() {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("prune")
+                .executes(ctx -> {
                     ServerLevel level = ctx.getSource().getLevel();
                     java.nio.file.Path dir = ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
                             .locatemore$storageSource().getDimensionPath(level.dimension()).resolve("region");
@@ -328,12 +385,14 @@ public class LocateMore implements ModInitializer {
                             + (held > 0 ? " (" + held + " still held open, run again after a restart)" : "") + ".";
                     ctx.getSource().sendSuccess(() -> Component.literal(line), false);
                     return removed;
-                }))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
-                        .requires(verify)
-                        .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
-                                        "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
-                                .executes(ctx -> verifyShadow(ctx, 20)))));
+                });
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> verifyTree() {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
+                .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                        .executes(ctx -> verifyShadow(ctx, 20)));
     }
 
     /**

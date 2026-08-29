@@ -87,8 +87,10 @@ turns off chunk generation (`mathOnly()`), and excludes previous hits.
   generated to the first stage, exactly like vanilla locate; each probe
   adds 4 to 12 KB to the save and the summary reports the count.
   Single-set structures never need probes.
-- Nothing persists between sessions; a datapack reload aborts running
-  searches and clears the session memo.
+- No search state persists between sessions; a datapack reload aborts
+  running searches and clears the session memo. Marks are the deliberate
+  exception: they are bookmarks in the player's own data, and never an
+  input to a search result.
 - Default bounds: 1,000,000 block radius, 60 s wall clock, 50,000 candidate
   checks, 2 concurrent searches. Partial results say so. All of it lives in
   `config/locatemore.json`.
@@ -100,18 +102,21 @@ turns off chunk generation (`mathOnly()`), and excludes previous hits.
 | `/locate structure <id\|#tag> <count> [min_distance]` | async search, streams the N nearest (optionally at least that far away) |
 | `/locate biome <id\|#tag> <count> [min_distance]` | async biome search, N distinct patches |
 | `/locate poi <id\|#tag> <count> [min_distance]` | async poi search over all explored terrain |
-| `/locatemore near structure\|biome <a> structure\|biome <b> [radius]` | the nearest a with a b within radius (default 512), e.g. a village next to a desert (mixed pairs put the structure first) |
-| `/locatemore track <x> <y> <z> <name>` | live distance + arrow in the action bar, self-clearing |
-| `/locatemore compass <x> <y> <z> <name>` | named compass pointing at the spot |
-| `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
-| `/locatemore prune` | delete empty region files (vanilla's scan path still leaves them, MC-311323) |
+| `/locate near structure\|biome <a> structure\|biome <b> [radius]` | the nearest a with a b within radius (default 512), e.g. a village next to a desert (mixed pairs put the structure first) |
+| `/locate mark [name]` | save the spot you stand on / list your marks, each with the buttons below |
+| `/locate track <x> <y> <z> <name>` | live distance + arrow in the action bar, self-clearing |
+| `/locate compass <x> <y> <z> <name>` | named compass pointing at the spot |
+| `/locate verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
+| `/locate prune` | delete empty region files (vanilla's scan path still leaves them, MC-311323) |
 | `/gamerule locatemore:exact_locate` | per-world toggle for the vanilla call sites |
 
-Operator permission required, same as vanilla `/locate`. With a permissions
-mod (LuckPerms etc.) the `/locatemore` subcommands can be granted
-individually: `locatemore.track`, `locatemore.compass`, `locatemore.prune`,
-`locatemore.verify`, `locatemore.near`. Structure tags and all dimensions
-work. Vanilla clients on a dedicated server see correct output, because
+Operator permission required, same as vanilla `/locate`. Every subcommand
+also exists under `/locatemore`, and that alias is the one a permissions
+mod (LuckPerms etc.) can grant node by node: `locatemore.track`,
+`locatemore.compass`, `locatemore.mark`, `locatemore.prune`,
+`locatemore.verify`, `locatemore.near` (vanilla's /locate root demands op
+level 2 before any subcommand is consulted). Structure tags and all
+dimensions work. Vanilla clients on a dedicated server see correct output, because
 every line uses vanilla translation keys.
 
 ## Versions
