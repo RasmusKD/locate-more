@@ -43,9 +43,12 @@ import net.minecraft.world.level.levelgen.structure.Structure;
  */
 final class NearSearch {
 
-    /** Prefix sizes per rung: most pairs resolve in the first handful of A
-     * hits, so the sweep only widens when the near field is exhausted. */
-    private static final int[] LADDER = {8, 24, 64};
+    /** First rung: most pairs resolve in the first handful of A hits. The
+     * ladder then escalates without a ceiling; only A-exhaustion or the
+     * time budget ends a search, so a rare pair (a village against a
+     * climate it barely borders) is found if it exists at all. */
+    private static final int FIRST_RUNG = 8;
+    private static final int MAX_RUNG = 8192;
     /** Battery pacing: AsyncLocate.idle() includes this, so the gaps
      * between a run's inner searches never look idle to the lab driver. */
     private static final AtomicInteger RUNNING = new AtomicInteger();
@@ -226,42 +229,49 @@ final class NearSearch {
                 .withStyle(ChatFormatting.GRAY), false);
         RUNNING.incrementAndGet();
         try {
-            step(0);
+            step(FIRST_RUNG);
         } catch (Throwable t) {
             fail("Search failed: " + t.getMessage());
         }
         return 1;
     }
 
-    private void step(int rung) {
-        if (rung >= LADDER.length || System.nanoTime() > deadlineNanos) {
+    private void step(int target) {
+        if (target > MAX_RUNG || System.nanoTime() > deadlineNanos) {
             fail("No " + printableA + " with " + printableB + " within " + radius
-                    + " blocks found (checked " + probedIndex + " candidates).");
+                    + " blocks found (checked " + probedIndex
+                    + " candidates before the time budget ran out).");
             return;
         }
-        batcher.upTo(LADDER[rung]).whenCompleteAsync((prefix, error) -> {
+        batcher.upTo(target).whenCompleteAsync((prefix, error) -> {
             try {
                 if (error != null) {
                     fail("Search failed: " + error.getMessage());
                     return;
                 }
-                probeNext(prefix, rung);
+                probeNext(prefix, target);
             } catch (Throwable t) {
                 fail("Search failed: " + t.getMessage());
             }
         }, source.getServer());
     }
 
-    private void probeNext(List<BlockPos> prefix, int rung) {
+    private void probeNext(List<BlockPos> prefix, int target) {
         if (probedIndex >= prefix.size()) {
-            if (prefix.size() < LADDER[rung]) {
+            if (prefix.size() < target) {
                 // The engine could not produce a longer prefix: there is
                 // no unprobed A left within its distance and budget.
                 fail("No " + printableA + " with " + printableB + " within " + radius
-                        + " blocks found (checked " + probedIndex + " candidates).");
+                        + " blocks found (checked every candidate, " + probedIndex + ").");
             } else {
-                step(rung + 1);
+                step(target * 3);
             }
+            return;
+        }
+        if (System.nanoTime() > deadlineNanos) {
+            fail("No " + printableA + " with " + printableB + " within " + radius
+                    + " blocks found (checked " + probedIndex
+                    + " candidates before the time budget ran out).");
             return;
         }
         BlockPos aPos = prefix.get(probedIndex++);
@@ -270,7 +280,7 @@ final class NearSearch {
                 if (error == null && bPos != null) {
                     succeed(aPos, bPos);
                 } else {
-                    probeNext(prefix, rung);
+                    probeNext(prefix, target);
                 }
             } catch (Throwable t) {
                 fail("Search failed: " + t.getMessage());
