@@ -1078,7 +1078,7 @@ public final class BiomeLocate {
             if (apiSink != null) {
                 return;
             }
-            session.chat(() -> hitLine(number, hit.pos(), hit.distSqr(), session.printable, origin));
+            session.chat(() -> hitLine(number, hit.pos(), hit.distSqr(), session.printable, origin, session.viewer));
         }
 
         /**
@@ -1087,25 +1087,16 @@ public final class BiomeLocate {
          * point (a deep dark at -40 is not "here, but lower").
          */
         private static Component hitLine(int number, BlockPos pos, long distSqr, String printable,
-                BlockPos origin) {
+                BlockPos origin, HitPresentation.Viewer viewer) {
             int distance = Mth.floor(Mth.sqrt((float) distSqr));
             String heading = distance >= 16
                     ? HitPresentation.octant(pos.getX() - origin.getX(), pos.getZ() - origin.getZ())
                     : "away";
-            Component coordinates = ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
-                            pos.getX(), pos.getY(), pos.getZ()))
-                    .withStyle(style -> style.withColor(ChatFormatting.GREEN)
-                            .withClickEvent(new ClickEvent.SuggestCommand(
-                                    "/tp @s " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
-                            .withHoverEvent(new HoverEvent.ShowText(
-                                    Component.translatable("chat.coordinates.tooltip"))));
             String name = HitPresentation.trackName(printable, number);
             return Component.literal(number + ". ")
-                    .append(coordinates)
-                    .append(Component.literal(" (" + distance + " blocks " + heading + ") "))
-                    .append(HitPresentation.trackButton(pos.getX(), pos.getY(), pos.getZ(), name))
-                    .append(Component.literal(" "))
-                    .append(HitPresentation.compassButton(pos.getX(), pos.getY(), pos.getZ(), name));
+                    .append(HitPresentation.coordinates(pos, true, viewer))
+                    .append(Component.literal(" (" + distance + " blocks " + heading + ")"))
+                    .append(HitPresentation.buttons(pos.getX(), pos.getY(), pos.getY(), pos.getZ(), name, viewer));
         }
 
         private void pushProgress(int found, long columns, long startNanos) {

@@ -189,20 +189,10 @@ final class Marks {
         } else {
             where = pos.dimension().identifier().toString();
         }
-        // The exact coordinate component every other line uses: vanilla
-        // lang key, click fills /tp, same tooltip.
-        Component coordinates = net.minecraft.network.chat.ComponentUtils.wrapInSquareBrackets(
-                        Component.translatable("chat.coordinates", p.getX(), p.getY(), p.getZ()))
-                .withStyle(style -> style.withColor(ChatFormatting.GREEN)
-                        .withClickEvent(new net.minecraft.network.chat.ClickEvent.SuggestCommand(
-                                "/tp @s " + p.getX() + " " + p.getY() + " " + p.getZ()))
-                        .withHoverEvent(new net.minecraft.network.chat.HoverEvent.ShowText(
-                                Component.translatable("chat.coordinates.tooltip"))));
+        HitPresentation.Viewer viewer = HitPresentation.Viewer.of(player.createCommandSourceStack());
         return Component.literal(name + ": ")
-                .append(coordinates)
-                .append(Component.literal(" (" + where + ") "))
-                .append(HitPresentation.trackButton(p.getX(), p.getY(), p.getZ(), name))
-                .append(Component.literal(" "))
-                .append(HitPresentation.compassButton(p.getX(), p.getY(), p.getZ(), name));
+                .append(HitPresentation.coordinates(p, true, viewer))
+                .append(Component.literal(" (" + where + ")"))
+                .append(HitPresentation.buttons(p.getX(), p.getY(), p.getY(), p.getZ(), name, viewer));
     }
 }

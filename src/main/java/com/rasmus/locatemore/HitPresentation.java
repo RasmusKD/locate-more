@@ -24,30 +24,73 @@ final class HitPresentation {
     }
 
     /**
+     * What this viewer's lines may carry: the track and compass buttons
+     * only when their permission nodes hold (dead buttons read like bugs),
+     * and clickable coordinates only with vanilla /tp permission; without
+     * it the coordinates still show, just as plain text. Computed once at
+     * command time (the PipeLink pattern from craftbook-extended).
+     */
+    record Viewer(boolean track, boolean compass, boolean teleport) {
+        static Viewer of(net.minecraft.commands.CommandSourceStack source) {
+            return new Viewer(
+                    me.lucko.fabric.api.permissions.v0.Permissions.check(source,
+                            "locatemore.track", net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS),
+                    me.lucko.fabric.api.permissions.v0.Permissions.check(source,
+                            "locatemore.compass", net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS),
+                    net.minecraft.commands.Commands.hasPermission(
+                            net.minecraft.commands.Commands.LEVEL_GAMEMASTERS).test(source));
+        }
+    }
+
+    /** The coordinate component every line shares; yShown null renders and
+     * teleports with the vanilla tilde. */
+    static Component coordinates(BlockPos pos, boolean realY, Viewer viewer) {
+        Object shownY = realY ? pos.getY() : "~";
+        String tpY = realY ? String.valueOf(pos.getY()) : "~";
+        net.minecraft.network.chat.MutableComponent coords =
+                ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
+                                pos.getX(), shownY, pos.getZ()))
+                        .withStyle(ChatFormatting.GREEN);
+        if (viewer.teleport()) {
+            coords = coords.withStyle(style -> style
+                    .withClickEvent(new ClickEvent.SuggestCommand(
+                            "/tp @s " + pos.getX() + " " + tpY + " " + pos.getZ()))
+                    .withHoverEvent(new HoverEvent.ShowText(
+                            Component.translatable("chat.coordinates.tooltip"))));
+        }
+        return coords;
+    }
+
+    /** The button tail, space-prefixed per button, empty without perms. */
+    static Component buttons(int x, int trackY, int compassY, int z, String name, Viewer viewer) {
+        net.minecraft.network.chat.MutableComponent tail = Component.empty();
+        if (viewer.track()) {
+            tail.append(Component.literal(" ")).append(trackButton(x, trackY, z, name));
+        }
+        if (viewer.compass()) {
+            tail.append(Component.literal(" ")).append(compassButton(x, compassY, z, name));
+        }
+        return tail;
+    }
+
+    /**
      * The [track] button arms the action-bar travel tracker: distance and
      * a direction arrow while walking there, self-clearing on arrival, so
      * nothing needs cleaning up afterwards.
      */
-    static Component hitLine(int number, LocateMore.Hit hit, String printable, BlockPos origin) {
+    static Component hitLine(int number, LocateMore.Hit hit, String printable, BlockPos origin,
+            Viewer viewer) {
         int distance = Mth.floor(Mth.sqrt((float) hit.horizDistSqr()));
         // Direction at a glance: "1945 blocks W" reads as a place, not a
         // number; very close hits keep the plain "away".
         String heading = distance >= 16
                 ? octant(hit.pos().getX() - origin.getX(), hit.pos().getZ() - origin.getZ())
                 : "away";
-        Component coordinates = ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
-                        hit.pos().getX(), "~", hit.pos().getZ()))
-                .withStyle(style -> style.withColor(ChatFormatting.GREEN)
-                        .withClickEvent(new ClickEvent.SuggestCommand(
-                                "/tp @s " + hit.pos().getX() + " ~ " + hit.pos().getZ()))
-                        .withHoverEvent(new HoverEvent.ShowText(Component.translatable("chat.coordinates.tooltip"))));
         String name = trackName(printable, number);
         return Component.literal(number + ". ")
-                .append(coordinates)
-                .append(Component.literal(" (" + distance + " blocks " + heading + ") "))
-                .append(trackButton(hit.pos().getX(), 0, hit.pos().getZ(), name))
-                .append(Component.literal(" "))
-                .append(compassButton(hit.pos().getX(), 64, hit.pos().getZ(), name));
+                .append(coordinates(hit.pos(), false, viewer))
+                .append(Component.literal(" (" + distance + " blocks " + heading + ")"))
+                .append(buttons(hit.pos().getX(), 0, 64, hit.pos().getZ(), name, viewer));
     }
 
     /**

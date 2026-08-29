@@ -567,20 +567,12 @@ public final class PoiLocate {
             String heading = distance >= 16
                     ? HitPresentation.octant(hit.pos().getX() - origin.getX(), hit.pos().getZ() - origin.getZ())
                     : "away";
-            Component coordinates = ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
-                            hit.pos().getX(), hit.pos().getY(), hit.pos().getZ()))
-                    .withStyle(style -> style.withColor(ChatFormatting.GREEN)
-                            .withClickEvent(new ClickEvent.SuggestCommand(
-                                    "/tp @s " + hit.pos().getX() + " " + hit.pos().getY() + " " + hit.pos().getZ()))
-                            .withHoverEvent(new HoverEvent.ShowText(
-                                    Component.translatable("chat.coordinates.tooltip"))));
             String name = HitPresentation.trackName(session.printable, number);
             return Component.literal(number + ". ")
-                    .append(coordinates)
-                    .append(Component.literal(" (" + distance + " blocks " + heading + ") "))
-                    .append(HitPresentation.trackButton(hit.pos().getX(), hit.pos().getY(), hit.pos().getZ(), name))
-                    .append(Component.literal(" "))
-                    .append(HitPresentation.compassButton(hit.pos().getX(), hit.pos().getY(), hit.pos().getZ(), name));
+                    .append(HitPresentation.coordinates(hit.pos(), true, session.viewer))
+                    .append(Component.literal(" (" + distance + " blocks " + heading + ")"))
+                    .append(HitPresentation.buttons(hit.pos().getX(), hit.pos().getY(), hit.pos().getY(),
+                            hit.pos().getZ(), name, session.viewer));
         }
     }
 }

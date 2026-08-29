@@ -31,6 +31,7 @@ final class SearchSession {
     final CommandSourceStack source;
     final String printable;
     final UUID playerId;
+    final HitPresentation.Viewer viewer;
     private final BooleanSupplier aborted;
     private volatile ServerBossEvent bossBar;
     private long lastProgressPush;
@@ -43,6 +44,7 @@ final class SearchSession {
         this.printable = printable;
         this.aborted = aborted;
         this.playerId = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : null;
+        this.viewer = HitPresentation.Viewer.of(source);
     }
 
     void attachBossBar(ServerPlayer player) {
