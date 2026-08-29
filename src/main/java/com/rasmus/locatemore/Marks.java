@@ -22,9 +22,9 @@ import net.minecraft.util.Mth;
  * per name per player, persisted through the Fabric attachment API
  * (survives restarts, copies through death), and the payoff is the
  * buttons: every mark line carries the same [track] and [compass] the
- * search results do. This is deliberately not a homes mod: nothing
- * teleports, and per the mod's state rule the marks feed buttons only,
- * never a search result.
+ * search results do, plus a one-click teleport on the coordinates that
+ * runs vanilla /tp, so vanilla's permission decides. Per the mod's state
+ * rule the marks feed buttons only, never a search result.
  */
 final class Marks {
 
@@ -191,8 +191,14 @@ final class Marks {
             where = pos.dimension().identifier().toString();
         }
         return Component.literal(name + ": ")
+                // One-click teleport, the /homes feel; vanilla's own /tp
+                // permission decides whether the click works.
                 .append(Component.literal("[" + p.getX() + ", " + p.getY() + ", " + p.getZ() + "]")
-                        .withStyle(ChatFormatting.GREEN))
+                        .withStyle(style -> style.withColor(ChatFormatting.GREEN)
+                                .withClickEvent(new net.minecraft.network.chat.ClickEvent.RunCommand(
+                                        "/tp @s " + p.getX() + " " + p.getY() + " " + p.getZ()))
+                                .withHoverEvent(new net.minecraft.network.chat.HoverEvent.ShowText(
+                                        Component.literal("Click to teleport")))))
                 .append(Component.literal(" (" + where + ") "))
                 .append(HitPresentation.trackButton(p.getX(), p.getY(), p.getZ(), name))
                 .append(Component.literal(" "))
