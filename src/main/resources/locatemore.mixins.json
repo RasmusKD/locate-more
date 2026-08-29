@@ -6,7 +6,8 @@
     "ChunkGeneratorMixin",
     "LocateCommandMixin",
     "MinecraftServerAccessor",
-    "MultiNoiseBiomeSourceInvoker"
+    "MultiNoiseBiomeSourceInvoker",
+    "SectionStorageAccessor"
   ],
   "injectors": {
     "defaultRequire": 1

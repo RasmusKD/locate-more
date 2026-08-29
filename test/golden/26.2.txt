@@ -76,3 +76,6 @@ The nearest minecraft:desert is at [3808, 100, -2432] (4518 blocks away)
 1. [3328, ~, -2528] (4179 blocks NE) [track] [compass]
 1. [320, ~, -1952] (1978 blocks N) [track] [compass]
 1. [3936, ~, -2144] (4482 blocks NE) [track] [compass]
+1. [4, 78, 4] (5 blocks away) [track] [compass]
+2. [8, 79, 17] (18 blocks SE) [track] [compass]
+3. [-5, 77, 16] (16 blocks S) [track] [compass]

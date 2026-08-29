@@ -124,6 +124,7 @@ public class LocateMore implements ModInitializer {
         LocateMoreGameRules.init();
         AsyncLocate.init();
         BiomeLocate.init();
+        PoiLocate.init();
         TravelTracker.init();
         CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher, ctx));
         LOGGER.info("Vanilla /locate, eyes of ender, and other mods now return the true nearest "
@@ -177,6 +178,29 @@ public class LocateMore implements ModInitializer {
                                     .executes(ctx -> BiomeLocate.start(ctx.getSource(),
                                             net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
                                                     ctx, "biome", Registries.BIOME),
+                                            IntegerArgumentType.getInteger(ctx, "count"),
+                                            IntegerArgumentType.getInteger(ctx, "min_distance"))))
+                            .build());
+        }
+
+        CommandNode<CommandSourceStack> poiLiteral = locate.getChild("poi");
+        CommandNode<CommandSourceStack> poiArg = poiLiteral == null ? null : poiLiteral.getChild("poi");
+        if (poiArg == null) {
+            LOGGER.warn("Could not find the vanilla /locate poi <poi> node; count argument not registered");
+        } else if (poiArg.getChild("count") != null) {
+            LOGGER.warn("Another mod already registered a 'count' argument on /locate poi; skipping graft");
+        } else {
+            poiArg.addChild(
+                    RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
+                            .executes(ctx -> PoiLocate.start(ctx.getSource(),
+                                    net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
+                                            ctx, "poi", Registries.POINT_OF_INTEREST_TYPE),
+                                    IntegerArgumentType.getInteger(ctx, "count"), 0))
+                            .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("min_distance",
+                                            IntegerArgumentType.integer(0, 1_000_000))
+                                    .executes(ctx -> PoiLocate.start(ctx.getSource(),
+                                            net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
+                                                    ctx, "poi", Registries.POINT_OF_INTEREST_TYPE),
                                             IntegerArgumentType.getInteger(ctx, "count"),
                                             IntegerArgumentType.getInteger(ctx, "min_distance"))))
                             .build());

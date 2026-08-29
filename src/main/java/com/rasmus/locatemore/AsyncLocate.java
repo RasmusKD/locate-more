@@ -150,8 +150,9 @@ public final class AsyncLocate {
                 && WAITING_PLAYERS.isEmpty() && WAITING_API.isEmpty()
                 // Constellation runs orchestrate API searches with gaps
                 // between them; without this the battery would advance in
-                // one of those gaps and interleave output.
-                && NearSearch.idle();
+                // one of those gaps and interleave output. The poi engine
+                // rides along for the same lab-pacing reason.
+                && NearSearch.idle() && PoiLocate.idle();
     }
 
     private static synchronized ExecutorService mathPool() {

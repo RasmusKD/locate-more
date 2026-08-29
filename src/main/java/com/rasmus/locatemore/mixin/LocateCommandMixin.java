@@ -56,4 +56,21 @@ public class LocateCommandMixin {
         }
         cir.setReturnValue(BiomeLocate.start(source, resourceOrTag, 1));
     }
+
+    /**
+     * Same treatment for /locate poi: vanilla synchronously loads and pins
+     * every poi column within its 256-block radius on the server thread;
+     * the async engine reads through the poi storage's own worker instead,
+     * searches all explored terrain, and its 3D ordering matches vanilla's
+     * comparator whenever the answer lies within vanilla's radius.
+     */
+    @Inject(method = "locatePoi", at = @At("HEAD"), cancellable = true)
+    private static void locatemore$asyncLocatePoi(CommandSourceStack source,
+            ResourceOrTagArgument.Result<net.minecraft.world.entity.ai.village.poi.PoiType> resourceOrTag,
+            CallbackInfoReturnable<Integer> cir) {
+        if (!LocateMoreGameRules.enabled(source.getLevel()) || LocateMore.labBypass()) {
+            return;
+        }
+        cir.setReturnValue(com.rasmus.locatemore.PoiLocate.start(source, resourceOrTag, 1, 0));
+    }
 }
