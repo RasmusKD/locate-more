@@ -170,6 +170,90 @@ public final class PoiLocate {
     record Hit(BlockPos pos, long dist3DSqr, long horizSqr) {
     }
 
+    /**
+     * Union-find over record positions with orthogonal adjacency: portal
+     * frames are connected block sets, so a whole portal collapses to one
+     * cluster. Each cluster keeps its nearest member as representative,
+     * folded on union, so representative lookup never walks members.
+     */
+    private static final class Clusters {
+        private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap byPos =
+                new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+        private final it.unimi.dsi.fastutil.ints.IntArrayList parent =
+                new it.unimi.dsi.fastutil.ints.IntArrayList();
+        private final List<Hit> best = new ArrayList<>();
+
+        Clusters() {
+            byPos.defaultReturnValue(-1);
+        }
+
+        private int find(int i) {
+            while (parent.getInt(i) != i) {
+                parent.set(i, parent.getInt(parent.getInt(i)));
+                i = parent.getInt(i);
+            }
+            return i;
+        }
+
+        void add(BlockPos pos, Hit hit) {
+            int root = -1;
+            long[] neighbors = {
+                    BlockPos.asLong(pos.getX() + 1, pos.getY(), pos.getZ()),
+                    BlockPos.asLong(pos.getX() - 1, pos.getY(), pos.getZ()),
+                    BlockPos.asLong(pos.getX(), pos.getY() + 1, pos.getZ()),
+                    BlockPos.asLong(pos.getX(), pos.getY() - 1, pos.getZ()),
+                    BlockPos.asLong(pos.getX(), pos.getY(), pos.getZ() + 1),
+                    BlockPos.asLong(pos.getX(), pos.getY(), pos.getZ() - 1)};
+            for (long neighbor : neighbors) {
+                int id = byPos.get(neighbor);
+                if (id < 0) {
+                    continue;
+                }
+                int r = find(id);
+                if (root == -1) {
+                    root = r;
+                } else if (r != root) {
+                    parent.set(r, root);
+                    if (best.get(r).dist3DSqr() < best.get(root).dist3DSqr()) {
+                        best.set(root, best.get(r));
+                    }
+                }
+            }
+            if (root == -1) {
+                root = parent.size();
+                parent.add(root);
+                best.add(hit);
+            } else if (hit.dist3DSqr() < best.get(root).dist3DSqr()) {
+                best.set(root, hit);
+            }
+            byPos.put(pos.asLong(), root);
+        }
+
+        int clusterCount() {
+            int n = 0;
+            for (int i = 0; i < parent.size(); i++) {
+                if (find(i) == i) {
+                    n++;
+                }
+            }
+            return n;
+        }
+
+        List<Hit> topRepresentatives(int count) {
+            List<Hit> roots = new ArrayList<>();
+            for (int i = 0; i < parent.size(); i++) {
+                if (find(i) == i) {
+                    roots.add(best.get(i));
+                }
+            }
+            roots.sort(Comparator.comparingLong(Hit::dist3DSqr));
+            if (roots.size() > count) {
+                roots.subList(count, roots.size()).clear();
+            }
+            return roots;
+        }
+    }
+
     private static final class Task {
         final MinecraftServer server;
         final ResourceKey<Level> dimension;
@@ -242,19 +326,28 @@ public final class PoiLocate {
         /**
          * Explored terrain = the union of poi region files; their extent
          * bounds the sweep. Chunk rings walk outward and the loop stops as
-         * soon as no unscanned ring can beat the worst kept hit: a ring-k
-         * chunk's nearest point is at least (k-1)*16 blocks out, and the
-         * y term only adds, so the horizontal bound is a valid 3D bound.
+         * soon as no unscanned ring can beat the count-th best place: a
+         * ring-k chunk's nearest point is at least (k-1)*16 blocks out, and
+         * the y term only adds, so the horizontal bound is a valid 3D bound.
+         *
+         * <p>N results are N places, not N records: vanilla indexes one poi
+         * record per block, so a single nether portal is many records.
+         * Orthogonally adjacent matching records merge into one cluster
+         * whose representative is its nearest block; a min_distance record
+         * filter runs first, so the representative is the nearest
+         * QUALIFYING block.
          */
         private List<Hit> search(long startNanos) {
             int maxRing = maxRegionRing();
             long wallClockMs = Config.wallClockSeconds() * 1000L;
             ChunkPos originChunk = ChunkPos.containing(origin);
-            List<Hit> hits = new ArrayList<>();
+            Clusters clusters = new Clusters();
             long chunksScanned = 0;
             for (int ring = 0; ring <= maxRing && !aborted.get(); ring++) {
                 long ringFloor = Math.max(0, (long) (ring - 1) * 16);
-                if (hits.size() >= count && worstKept(hits) < ringFloor * ringFloor) {
+                List<Hit> top = clusters.topRepresentatives(count);
+                if (top.size() >= count
+                        && top.get(count - 1).dist3DSqr() < ringFloor * ringFloor) {
                     break;
                 }
                 for (int dx = -ring; dx <= ring; dx++) {
@@ -280,36 +373,20 @@ public final class PoiLocate {
                                 continue;
                             }
                             long dy = record.pos().getY() - origin.getY();
-                            hits.add(new Hit(record.pos(), horiz + dy * dy, horiz));
+                            clusters.add(record.pos(), new Hit(record.pos(), horiz + dy * dy, horiz));
                         }
                     }
-                }
-                if (hits.size() > count * 4) {
-                    hits.sort(Comparator.comparingLong(Hit::dist3DSqr));
-                    hits.subList(count, hits.size()).clear();
                 }
                 if ((System.nanoTime() - startNanos) / 1_000_000L > wallClockMs) {
                     budgetStopped = true;
                     break;
                 }
                 final long scanned = chunksScanned;
-                final int found = Math.min(hits.size(), count);
+                final int found = Math.min(clusters.clusterCount(), count);
                 session.progress(Math.min(0.95F, ring / (float) Math.max(1, maxRing)),
                         () -> found + " found, " + scanned + " chunks scanned");
             }
-            hits.sort(Comparator.comparingLong(Hit::dist3DSqr));
-            if (hits.size() > count) {
-                hits.subList(count, hits.size()).clear();
-            }
-            return hits;
-        }
-
-        private long worstKept(List<Hit> hits) {
-            long worst = 0;
-            for (Hit hit : hits) {
-                worst = Math.max(worst, hit.dist3DSqr());
-            }
-            return worst;
+            return clusters.topRepresentatives(count);
         }
 
         /**

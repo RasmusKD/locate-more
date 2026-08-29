@@ -50,6 +50,10 @@ final class NearSearch {
      * between a run's inner searches never look idle to the lab driver. */
     private static final AtomicInteger RUNNING = new AtomicInteger();
 
+    /** Radius when the argument is left off: close enough to feel "next
+     * to", far enough that a village and its biome neighbor pair up. */
+    private static final int DEFAULT_RADIUS = 512;
+
     /** Completes with the full distance-ordered prefix of A positions. */
     private interface Batcher {
         CompletableFuture<List<BlockPos>> upTo(int count);
@@ -91,6 +95,14 @@ final class NearSearch {
         return RUNNING.get() == 0;
     }
 
+    private static int radiusArg(CommandContext<CommandSourceStack> ctx) {
+        try {
+            return IntegerArgumentType.getInteger(ctx, "radius");
+        } catch (IllegalArgumentException e) {
+            return DEFAULT_RADIUS;
+        }
+    }
+
     static int structureNearStructure(CommandContext<CommandSourceStack> ctx)
             throws CommandSyntaxException {
         CommandSourceStack source = ctx.getSource();
@@ -98,7 +110,7 @@ final class NearSearch {
                 ctx, "structure", Registries.STRUCTURE, LocateMore.ERROR_STRUCTURE_INVALID);
         var b = ResourceOrTagKeyArgument.getResourceOrTagKey(
                 ctx, "other", Registries.STRUCTURE, LocateMore.ERROR_STRUCTURE_INVALID);
-        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        int radius = radiusArg(ctx);
         HolderSet<Structure> aHolders = LocateMore.resolveStructures(source, a);
         HolderSet<Structure> bHolders = LocateMore.resolveStructures(source, b);
         ServerLevel level = source.getLevel();
@@ -120,7 +132,7 @@ final class NearSearch {
                 ctx, "structure", Registries.STRUCTURE, LocateMore.ERROR_STRUCTURE_INVALID);
         ResourceOrTagArgument.Result<Biome> b = ResourceOrTagArgument.getResourceOrTag(
                 ctx, "biome", Registries.BIOME);
-        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        int radius = radiusArg(ctx);
         HolderSet<Structure> aHolders = LocateMore.resolveStructures(source, a);
         ServerLevel level = source.getLevel();
         Set<Holder<Biome>> targets = resolveBiomes(source, b);
@@ -140,7 +152,7 @@ final class NearSearch {
                 ctx, "biome", Registries.BIOME);
         ResourceOrTagArgument.Result<Biome> b = ResourceOrTagArgument.getResourceOrTag(
                 ctx, "other", Registries.BIOME);
-        int radius = IntegerArgumentType.getInteger(ctx, "radius");
+        int radius = radiusArg(ctx);
         Set<Holder<Biome>> aTargets = resolveBiomes(source, a);
         Set<Holder<Biome>> bTargets = aTargets == null ? null : resolveBiomes(source, b);
         if (aTargets == null || bTargets == null) {

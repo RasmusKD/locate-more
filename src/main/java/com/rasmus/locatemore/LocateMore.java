@@ -245,12 +245,14 @@ public class LocateMore implements ModInitializer {
                                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
                                                 .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
                                                                 "other", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                                        .executes(NearSearch::structureNearStructure)
                                                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
                                                                         "radius", IntegerArgumentType.integer(32, 2048))
                                                                 .executes(NearSearch::structureNearStructure))))
                                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
                                                 .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
                                                                 "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                                        .executes(NearSearch::structureNearBiome)
                                                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
                                                                         "radius", IntegerArgumentType.integer(32, 2048))
                                                                 .executes(NearSearch::structureNearBiome))))))
@@ -260,6 +262,7 @@ public class LocateMore implements ModInitializer {
                                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
                                                 .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
                                                                 "other", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                                        .executes(NearSearch::biomeNearBiome)
                                                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
                                                                         "radius", IntegerArgumentType.integer(32, 2048))
                                                                 .executes(NearSearch::biomeNearBiome)))))))
