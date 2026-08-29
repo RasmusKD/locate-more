@@ -180,10 +180,28 @@ public class LocateMore implements ModInitializer {
      * under skipKnown, so map searches litter too. Prune stays load-bearing
      * even after Mojang fixes their side.
      */
+    /**
+     * Permission node with vanilla fallback: without a permissions mod this
+     * is exactly the old op-level-2 check; with one (LuckPerms etc.) servers
+     * can hand out the subcommands individually, e.g. track/compass to
+     * moderators without prune/verify.
+     */
+    private static java.util.function.Predicate<CommandSourceStack> perm(String node) {
+        return me.lucko.fabric.api.permissions.v0.Permissions.require(
+                "locatemore." + node, net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS);
+    }
+
     private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
+        var track = perm("track");
+        var compass = perm("compass");
+        var prune = perm("prune");
+        var verify = perm("verify");
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
-                .requires(net.minecraft.commands.Commands.hasPermission(net.minecraft.commands.Commands.LEVEL_GAMEMASTERS))
+                // The root shows up whenever any subcommand would.
+                .requires(source -> track.test(source) || compass.test(source)
+                        || prune.test(source) || verify.test(source))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("track")
+                        .requires(track)
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
                             if (ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player
                                     && TravelTracker.stop(player)) {
@@ -210,13 +228,16 @@ public class LocateMore implements ModInitializer {
                                                             return 1;
                                                         }))))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("compass")
+                        .requires(compass)
                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
                                 .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
                                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())
                                                 .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
                                                                 com.mojang.brigadier.arguments.StringArgumentType.greedyString())
                                                         .executes(LocateMore::giveCompass))))))
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("prune").executes(ctx -> {
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("prune")
+                        .requires(prune)
+                        .executes(ctx -> {
                     ServerLevel level = ctx.getSource().getLevel();
                     java.nio.file.Path dir = ((com.rasmus.locatemore.mixin.MinecraftServerAccessor) level.getServer())
                             .locatemore$storageSource().getDimensionPath(level.dimension()).resolve("region");
@@ -243,6 +264,7 @@ public class LocateMore implements ModInitializer {
                     return removed;
                 }))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("verify")
+                        .requires(verify)
                         .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
                                         "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
                                 .executes(ctx -> verifyShadow(ctx, 20)))));

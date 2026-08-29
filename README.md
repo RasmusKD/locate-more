@@ -190,11 +190,16 @@ marks the contract.
 |---|---|
 | `/locate structure <id\|#tag> <count>` | async search, streams the N nearest |
 | `/locate biome <id\|#tag> <count>` | async biome search, N distinct patches |
+| `/locatemore track <x> <y> <z> <name>` | live distance + arrow in the action bar, self-clearing |
+| `/locatemore compass <x> <y> <z> <name>` | named compass pointing at the spot |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
 | `/locatemore prune` | delete empty region files (vanilla's scan path still leaves them, MC-311323) |
 | `/gamerule locatemore:exact_locate` | per-world toggle for the vanilla call sites |
 
-Operator permission required, same as vanilla `/locate`. Structure tags and
+Operator permission required, same as vanilla `/locate`. With a permissions
+mod (LuckPerms etc.) the `/locatemore` subcommands can be granted individually:
+`locatemore.track`, `locatemore.compass`, `locatemore.prune`,
+`locatemore.verify`. Structure tags and
 all dimensions work. Vanilla clients on a dedicated server see correct output,
 because every line uses vanilla translation keys.
 
