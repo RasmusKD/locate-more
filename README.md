@@ -100,7 +100,7 @@ turns off chunk generation (`mathOnly()`), and excludes previous hits.
 | `/locate structure <id\|#tag> <count> [min_distance]` | async search, streams the N nearest (optionally at least that far away) |
 | `/locate biome <id\|#tag> <count> [min_distance]` | async biome search, N distinct patches |
 | `/locate poi <id\|#tag> <count> [min_distance]` | async poi search over all explored terrain |
-| `/locatemore near structure\|biome <a> structure\|biome <b> <radius>` | the nearest a with a b within radius, e.g. a village next to a desert (mixed pairs put the structure first) |
+| `/locatemore near structure\|biome <a> structure\|biome <b> [radius]` | the nearest a with a b within radius (default 512), e.g. a village next to a desert (mixed pairs put the structure first) |
 | `/locatemore track <x> <y> <z> <name>` | live distance + arrow in the action bar, self-clearing |
 | `/locatemore compass <x> <y> <z> <name>` | named compass pointing at the spot |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
