@@ -72,6 +72,29 @@ public final class PoiLocate {
     private static final Map<Object, Task> ACTIVE = new ConcurrentHashMap<>();
     private static ExecutorService worker;
 
+    /**
+     * Session cache of clean-column parse results, keyed by PoiManager
+     * instance (weakly, so it dies with its level). Provably valid: every
+     * poi mutation passes setDirty, whose mixin drops the column here at
+     * the moment of mutation, and the per-search dirty snapshot overrides
+     * whatever is cached. Cleared on datapack reload (poi type holders
+     * rebind). Empty columns share one immutable list, so a big world
+     * costs map entries, not lists.
+     */
+    private static final Map<Object, ConcurrentHashMap<Long, List<PoiRecord.Packed>>> CLEAN_CACHE =
+            java.util.Collections.synchronizedMap(new java.util.WeakHashMap<>());
+
+    private static final List<PoiRecord.Packed> EMPTY = List.of();
+
+    /** Called by SectionStorageMixin on every setDirty; non-poi storages
+     * miss the map and cost one lookup. */
+    public static void invalidate(Object sectionStorage, long sectionPos) {
+        ConcurrentHashMap<Long, List<PoiRecord.Packed>> cache = CLEAN_CACHE.get(sectionStorage);
+        if (cache != null) {
+            cache.remove(ChunkPos.pack(SectionPos.x(sectionPos), SectionPos.z(sectionPos)));
+        }
+    }
+
     private PoiLocate() {
     }
 
@@ -93,11 +116,14 @@ public final class PoiLocate {
                 task.abort();
             }
             ACTIVE.clear();
+            CLEAN_CACHE.clear();
             if (worker != null) {
                 worker.shutdownNow();
                 worker = null;
             }
         });
+        ServerLifecycleEvents.END_DATA_PACK_RELOAD.register((server, resources, success) ->
+                CLEAN_CACHE.clear());
     }
 
     private static synchronized ExecutorService workerExecutor() {
@@ -117,8 +143,11 @@ public final class PoiLocate {
         ServerLevel level = source.getLevel();
         String printable = target.asPrintable();
         BlockPos origin = BlockPos.containing(source.getPosition());
-        SectionStorageAccessor access = (SectionStorageAccessor) level.getPoiManager();
+        Object poiManager = level.getPoiManager();
+        SectionStorageAccessor access = (SectionStorageAccessor) poiManager;
         SimpleRegionStorage storage = access.locatemore$simpleRegionStorage();
+        ConcurrentHashMap<Long, List<PoiRecord.Packed>> cache =
+                CLEAN_CACHE.computeIfAbsent(poiManager, k -> new ConcurrentHashMap<>());
         Path poiDir = ((MinecraftServerAccessor) source.getServer())
                 .locatemore$storageSource().getDimensionPath(level.dimension()).resolve("poi");
 
@@ -146,7 +175,7 @@ public final class PoiLocate {
                 source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console-poi",
                 target, count, (long) minDistanceBlocks * minDistanceBlocks, origin,
                 level.getMinSectionY(), level.getMaxSectionY(),
-                storage, new AsyncLocate.RegionCatalog(poiDir), poiDir, dirty,
+                storage, new AsyncLocate.RegionCatalog(poiDir), poiDir, dirty, cache,
                 level.registryAccess().createSerializationContext(NbtOps.INSTANCE), access);
 
         Task previous = ACTIVE.get(task.key);
@@ -270,6 +299,7 @@ public final class PoiLocate {
         final AsyncLocate.RegionCatalog catalog;
         final Path poiDir;
         final Long2ObjectMap<List<PoiRecord.Packed>> dirty;
+        final ConcurrentHashMap<Long, List<PoiRecord.Packed>> cache;
         final com.mojang.serialization.DynamicOps<Tag> ops;
         final SectionStorageAccessor access;
         boolean budgetStopped;
@@ -279,6 +309,7 @@ public final class PoiLocate {
                 int count, long minDistSqr, BlockPos origin, int minSectionY, int maxSectionY,
                 SimpleRegionStorage storage, AsyncLocate.RegionCatalog catalog, Path poiDir,
                 Long2ObjectMap<List<PoiRecord.Packed>> dirty,
+                ConcurrentHashMap<Long, List<PoiRecord.Packed>> cache,
                 com.mojang.serialization.DynamicOps<Tag> ops, SectionStorageAccessor access) {
             this.server = server;
             this.dimension = dimension;
@@ -295,6 +326,7 @@ public final class PoiLocate {
             this.catalog = catalog;
             this.poiDir = poiDir;
             this.dirty = dirty;
+            this.cache = cache;
             this.ops = ops;
             this.access = access;
         }
@@ -350,6 +382,12 @@ public final class PoiLocate {
                         && top.get(count - 1).dist3DSqr() < ringFloor * ringFloor) {
                     break;
                 }
+                // Instant sources first (dirty snapshot, session cache),
+                // then every remaining read in this ring is issued at once:
+                // the IOWorker pipeline swallows a batch far faster than
+                // one join per column, and clustering is order-independent
+                // within a ring.
+                List<ChunkPos> toRead = new ArrayList<>();
                 for (int dx = -ring; dx <= ring; dx++) {
                     for (int dz = -ring; dz <= ring; dz++) {
                         if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
@@ -358,24 +396,37 @@ public final class PoiLocate {
                         ChunkPos chunk = new ChunkPos(originChunk.x() + dx, originChunk.z() + dz);
                         List<PoiRecord.Packed> records = dirty.get(chunk.pack());
                         if (records == null) {
-                            if (!catalog.mayHoldChunks(chunk)) {
-                                continue;
-                            }
-                            records = readColumn(chunk);
+                            records = cache.get(chunk.pack());
                         }
-                        chunksScanned++;
-                        for (PoiRecord.Packed record : records) {
-                            if (!target.test(record.poiType())) {
-                                continue;
-                            }
-                            long horiz = LocateMore.horizDistSqr(record.pos(), origin);
-                            if (horiz < minDistSqr) {
-                                continue;
-                            }
-                            long dy = record.pos().getY() - origin.getY();
-                            clusters.add(record.pos(), new Hit(record.pos(), horiz + dy * dy, horiz));
+                        if (records != null) {
+                            chunksScanned++;
+                            accept(records, clusters);
+                            continue;
                         }
+                        if (!catalog.mayHoldChunks(chunk)) {
+                            continue;
+                        }
+                        toRead.add(chunk);
                     }
+                }
+                List<java.util.concurrent.CompletableFuture<Optional<net.minecraft.nbt.CompoundTag>>> reads =
+                        new ArrayList<>(toRead.size());
+                for (ChunkPos chunk : toRead) {
+                    reads.add(storage.read(chunk));
+                }
+                for (int i = 0; i < toRead.size(); i++) {
+                    Optional<net.minecraft.nbt.CompoundTag> tag;
+                    try {
+                        tag = reads.get(i).join();
+                    } catch (Exception e) {
+                        // Transient failure: nothing cached, nothing added.
+                        LOGGER.warn("Poi read failed at {}", toRead.get(i), e);
+                        continue;
+                    }
+                    List<PoiRecord.Packed> records = parseColumn(tag);
+                    cache.put(toRead.get(i).pack(), records.isEmpty() ? EMPTY : records);
+                    chunksScanned++;
+                    accept(records, clusters);
                 }
                 if ((System.nanoTime() - startNanos) / 1_000_000L > wallClockMs) {
                     budgetStopped = true;
@@ -389,21 +440,28 @@ public final class PoiLocate {
             return clusters.topRepresentatives(count);
         }
 
+        private void accept(List<PoiRecord.Packed> records, Clusters clusters) {
+            for (PoiRecord.Packed record : records) {
+                if (!target.test(record.poiType())) {
+                    continue;
+                }
+                long horiz = LocateMore.horizDistSqr(record.pos(), origin);
+                if (horiz < minDistSqr) {
+                    continue;
+                }
+                long dy = record.pos().getY() - origin.getY();
+                clusters.add(record.pos(), new Hit(record.pos(), horiz + dy * dy, horiz));
+            }
+        }
+
         /**
-         * Vanilla's PackedChunk.parse, mirrored: read through the poi
-         * IOWorker (pending writes visible, no torn files), datafix from
-         * default DataVersion 1945, parse each in-range section with the
-         * vanilla codec, and drop a section on parse error exactly as
+         * Vanilla's PackedChunk.parse, mirrored: the tag came through the
+         * poi IOWorker (pending writes visible, no torn files); datafix
+         * from default DataVersion 1945, parse each in-range section with
+         * the vanilla codec, and drop a section on parse error exactly as
          * vanilla drops it.
          */
-        private List<PoiRecord.Packed> readColumn(ChunkPos chunk) {
-            Optional<net.minecraft.nbt.CompoundTag> tag;
-            try {
-                tag = storage.read(chunk).join();
-            } catch (Exception e) {
-                LOGGER.warn("Poi read failed at {}", chunk, e);
-                return List.of();
-            }
+        private List<PoiRecord.Packed> parseColumn(Optional<net.minecraft.nbt.CompoundTag> tag) {
             if (tag.isEmpty()) {
                 return List.of();
             }
