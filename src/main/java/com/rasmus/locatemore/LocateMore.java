@@ -309,6 +309,9 @@ public class LocateMore implements ModInitializer {
 
     private static LiteralArgumentBuilder<CommandSourceStack> trackTree() {
         return LiteralArgumentBuilder.<CommandSourceStack>literal("track")
+                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("mark",
+                                com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .executes(Marks::trackByName))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
                     if (ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player
                             && TravelTracker.stop(player)) {
@@ -338,6 +341,9 @@ public class LocateMore implements ModInitializer {
 
     private static LiteralArgumentBuilder<CommandSourceStack> compassTree() {
         return LiteralArgumentBuilder.<CommandSourceStack>literal("compass")
+                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("mark",
+                                com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .executes(Marks::compassByName))
                 .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
                                 .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("z", IntegerArgumentType.integer())

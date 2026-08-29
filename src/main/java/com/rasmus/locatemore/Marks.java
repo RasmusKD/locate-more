@@ -39,9 +39,74 @@ final class Marks {
     private Marks() {
     }
 
-    /** Forces attachment registration during mod init, before any player
-     * data with persisted marks could load. */
+    /**
+     * Runs during mod init, which both forces attachment registration
+     * before any player data with persisted marks could load, and arms the
+     * death mark: dying overwrites the mark named "death" with the spot
+     * (the cap never blocks it), and the respawn message carries the same
+     * track and compass buttons every mark line has. Bookmarking a death
+     * is the one mark players never think to set in time.
+     */
     static void init() {
+        net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents.AFTER_DEATH.register(
+                (entity, damageSource) -> {
+                    if (entity instanceof ServerPlayer player) {
+                        Map<String, GlobalPos> marks = new HashMap<>(player.getAttachedOrElse(MARKS, Map.of()));
+                        marks.put("death", GlobalPos.of(player.level().dimension(), player.blockPosition()));
+                        player.setAttached(MARKS, Map.copyOf(marks));
+                    }
+                });
+        net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents.AFTER_RESPAWN.register(
+                (oldPlayer, newPlayer, alive) -> {
+                    if (alive) {
+                        return;
+                    }
+                    GlobalPos death = newPlayer.getAttachedOrElse(MARKS, Map.of()).get("death");
+                    if (death != null) {
+                        newPlayer.sendSystemMessage(markLine("death", death, newPlayer));
+                    }
+                });
+    }
+
+    /** The shared mark lookup for track/compass by name; null after a
+     * failure message was already sent. */
+    private static GlobalPos resolve(CommandContext<CommandSourceStack> ctx, ServerPlayer player) {
+        String name = StringArgumentType.getString(ctx, "mark");
+        GlobalPos pos = player.getAttachedOrElse(MARKS, Map.of()).get(name);
+        if (pos == null) {
+            ctx.getSource().sendFailure(Component.literal("No mark named " + name + "."));
+            return null;
+        }
+        if (pos.dimension() != player.level().dimension()) {
+            ctx.getSource().sendFailure(Component.literal(name + " is in "
+                    + pos.dimension().identifier() + "; travel there first."));
+            return null;
+        }
+        return pos;
+    }
+
+    static int trackByName(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+            return 0;
+        }
+        GlobalPos pos = resolve(ctx, player);
+        if (pos == null) {
+            return 0;
+        }
+        TravelTracker.track(player, pos.pos(), StringArgumentType.getString(ctx, "mark"));
+        return 1;
+    }
+
+    static int compassByName(CommandContext<CommandSourceStack> ctx) {
+        if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
+            return 0;
+        }
+        GlobalPos pos = resolve(ctx, player);
+        if (pos == null) {
+            return 0;
+        }
+        HitPresentation.giveCompass(player, pos.pos(), StringArgumentType.getString(ctx, "mark"));
+        return 1;
     }
 
     static int set(CommandContext<CommandSourceStack> ctx) {

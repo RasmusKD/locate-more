@@ -61,23 +61,27 @@ final class HitPresentation {
         if (!(ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player)) {
             return 0;
         }
-        int x = IntegerArgumentType.getInteger(ctx, "x");
-        int y = IntegerArgumentType.getInteger(ctx, "y");
-        int z = IntegerArgumentType.getInteger(ctx, "z");
-        String name = com.mojang.brigadier.arguments.StringArgumentType.getString(ctx, "name");
+        giveCompass(player, new BlockPos(
+                        IntegerArgumentType.getInteger(ctx, "x"),
+                        IntegerArgumentType.getInteger(ctx, "y"),
+                        IntegerArgumentType.getInteger(ctx, "z")),
+                com.mojang.brigadier.arguments.StringArgumentType.getString(ctx, "name"));
+        return 1;
+    }
+
+    static void giveCompass(net.minecraft.server.level.ServerPlayer player, BlockPos pos, String name) {
         net.minecraft.world.item.ItemStack compass =
                 new net.minecraft.world.item.ItemStack(net.minecraft.world.item.Items.COMPASS);
         compass.set(net.minecraft.core.component.DataComponents.LODESTONE_TRACKER,
                 new net.minecraft.world.item.component.LodestoneTracker(
                         java.util.Optional.of(net.minecraft.core.GlobalPos.of(
-                                player.level().dimension(), new BlockPos(x, y, z))),
+                                player.level().dimension(), pos)),
                         false));
         compass.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME,
                 Component.literal(name).withStyle(ChatFormatting.AQUA));
         if (!player.getInventory().add(compass)) {
             player.drop(compass, false);
         }
-        return 1;
     }
 
     /** Eight-way compass direction from origin toward a target. */
