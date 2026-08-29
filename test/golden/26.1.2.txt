@@ -67,3 +67,11 @@ Shadow verify minecraft:mansion: 5 agree)
 3. [-352, 100, 448] (569 blocks SW) [track] [compass]
 The nearest minecraft:desert is at [3808, 100, -2432] (4518 blocks away)
 1. [3936, 100, -2144] (4482 blocks NE) [track] [compass]
+1. [1488, ~, -288] (1515 blocks E) [track] [compass]
+2. [-1632, ~, -400] (1680 blocks W) [track] [compass]
+3. [192, ~, 1728] (1738 blocks S) [track] [compass]
+1. [3936, 100, -2144] (4482 blocks NE) [track] [compass]
+2. [4416, 100, -1920] (4815 blocks NE) [track] [compass]
+3. [3360, 100, 5056] (6070 blocks SE) [track] [compass]
+1. [3328, ~, -2528] (4179 blocks NE) [track] [compass]
+1. [320, ~, -1952] (1978 blocks N) [track] [compass]

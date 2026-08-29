@@ -92,7 +92,7 @@ public class LocateMore implements ModInitializer {
         labBypass = value;
     }
 
-    private static final DynamicCommandExceptionType ERROR_STRUCTURE_INVALID = new DynamicCommandExceptionType(
+    static final DynamicCommandExceptionType ERROR_STRUCTURE_INVALID = new DynamicCommandExceptionType(
             id -> Component.translatableEscape("commands.locate.structure.invalid", id));
     private static final DynamicCommandExceptionType ERROR_STRUCTURE_NOT_FOUND = new DynamicCommandExceptionType(
             id -> Component.translatableEscape("commands.locate.structure.not_found", id));
@@ -125,14 +125,15 @@ public class LocateMore implements ModInitializer {
         AsyncLocate.init();
         BiomeLocate.init();
         TravelTracker.init();
-        CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher));
+        CommandRegistrationCallback.EVENT.register((dispatcher, ctx, env) -> graft(dispatcher, ctx));
         LOGGER.info("Vanilla /locate, eyes of ender, and other mods now return the true nearest "
                 + "structure (MC-138887). Per world: /gamerule locatemore:exact_locate false. "
                 + "Server-wide kill switch: improveVanillaLocate in config/locatemore.json.");
     }
 
-    private static void graft(CommandDispatcher<CommandSourceStack> dispatcher) {
-        registerDebugCommand(dispatcher);
+    private static void graft(CommandDispatcher<CommandSourceStack> dispatcher,
+            net.minecraft.commands.CommandBuildContext buildContext) {
+        registerDebugCommand(dispatcher, buildContext);
         CommandNode<CommandSourceStack> locate = dispatcher.getRoot().getChild("locate");
         if (locate == null) {
             LOGGER.warn("Could not find the vanilla /locate command; count arguments not registered");
@@ -152,6 +153,9 @@ public class LocateMore implements ModInitializer {
             structureArg.addChild(
                     RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("count", IntegerArgumentType.integer(1, Config.maxCount()))
                             .executes(LocateMore::locateAsync)
+                            .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("min_distance",
+                                            IntegerArgumentType.integer(0, 1_000_000))
+                                    .executes(LocateMore::locateAsyncMinDistance))
                             .build());
         }
 
@@ -168,6 +172,13 @@ public class LocateMore implements ModInitializer {
                                     net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
                                             ctx, "biome", Registries.BIOME),
                                     IntegerArgumentType.getInteger(ctx, "count")))
+                            .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("min_distance",
+                                            IntegerArgumentType.integer(0, 1_000_000))
+                                    .executes(ctx -> BiomeLocate.start(ctx.getSource(),
+                                            net.minecraft.commands.arguments.ResourceOrTagArgument.getResourceOrTag(
+                                                    ctx, "biome", Registries.BIOME),
+                                            IntegerArgumentType.getInteger(ctx, "count"),
+                                            IntegerArgumentType.getInteger(ctx, "min_distance"))))
                             .build());
         }
     }
@@ -191,15 +202,34 @@ public class LocateMore implements ModInitializer {
                 "locatemore." + node, net.minecraft.server.permissions.PermissionLevel.GAMEMASTERS);
     }
 
-    private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher) {
+    private static void registerDebugCommand(CommandDispatcher<CommandSourceStack> dispatcher,
+            net.minecraft.commands.CommandBuildContext buildContext) {
         var track = perm("track");
         var compass = perm("compass");
         var prune = perm("prune");
         var verify = perm("verify");
+        var near = perm("near");
         dispatcher.register(LiteralArgumentBuilder.<CommandSourceStack>literal("locatemore")
                 // The root shows up whenever any subcommand would.
                 .requires(source -> track.test(source) || compass.test(source)
-                        || prune.test(source) || verify.test(source))
+                        || prune.test(source) || verify.test(source) || near.test(source))
+                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("near")
+                        .requires(near)
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
+                                .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                                "structure", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("structure")
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, ResourceOrTagKeyArgument.Result<Structure>>argument(
+                                                                "other", ResourceOrTagKeyArgument.resourceOrTagKey(Registries.STRUCTURE))
+                                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                                        "radius", IntegerArgumentType.integer(32, 2048))
+                                                                .executes(NearSearch::structureNearStructure))))
+                                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
+                                                                "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                                        "radius", IntegerArgumentType.integer(32, 2048))
+                                                                .executes(NearSearch::structureNearBiome)))))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("track")
                         .requires(track)
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
@@ -324,7 +354,15 @@ public class LocateMore implements ModInitializer {
             throws CommandSyntaxException {
         ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
                 ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
-        return startAsync(ctx.getSource(), result, IntegerArgumentType.getInteger(ctx, "count"));
+        return startAsync(ctx.getSource(), result, IntegerArgumentType.getInteger(ctx, "count"), 0);
+    }
+
+    private static int locateAsyncMinDistance(CommandContext<CommandSourceStack> ctx)
+            throws CommandSyntaxException {
+        ResourceOrTagKeyArgument.Result<Structure> result = ResourceOrTagKeyArgument.getResourceOrTagKey(
+                ctx, "structure", Registries.STRUCTURE, ERROR_STRUCTURE_INVALID);
+        return startAsync(ctx.getSource(), result, IntegerArgumentType.getInteger(ctx, "count"),
+                IntegerArgumentType.getInteger(ctx, "min_distance"));
     }
 
     /**
@@ -333,7 +371,7 @@ public class LocateMore implements ModInitializer {
      */
     public static int vanillaLocateAsync(CommandSourceStack source,
             ResourceOrTagKeyArgument.Result<Structure> result) throws CommandSyntaxException {
-        return startAsync(source, result, 1);
+        return startAsync(source, result, 1, 0);
     }
 
     /**
@@ -353,16 +391,27 @@ public class LocateMore implements ModInitializer {
     }
 
     private static int startAsync(CommandSourceStack source,
-            ResourceOrTagKeyArgument.Result<Structure> result, int count) throws CommandSyntaxException {
+            ResourceOrTagKeyArgument.Result<Structure> result, int count, int minDistance)
+            throws CommandSyntaxException {
         Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
-        String printable = result.unwrap().map(
+        String printable = structurePrintable(result);
+        HolderSet<Structure> holders = resolveStructures(source, result);
+        return AsyncLocate.start(source, printable, holders, count, minDistance);
+    }
+
+    static String structurePrintable(ResourceOrTagKeyArgument.Result<Structure> result) {
+        return result.unwrap().map(
                 key -> key.identifier().toString(),
                 tag -> "#" + tag.location());
-        HolderSet<Structure> holders = result.unwrap().map(
+    }
+
+    static HolderSet<Structure> resolveStructures(CommandSourceStack source,
+            ResourceOrTagKeyArgument.Result<Structure> result) throws CommandSyntaxException {
+        Registry<Structure> registry = source.getLevel().registryAccess().lookupOrThrow(Registries.STRUCTURE);
+        return result.unwrap().map(
                 key -> registry.get(key).map(holder -> (HolderSet<Structure>) HolderSet.direct(holder)),
                 registry::get
-        ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(printable));
-        return AsyncLocate.start(source, printable, holders, count);
+        ).orElseThrow(() -> ERROR_STRUCTURE_INVALID.create(structurePrintable(result)));
     }
 
     /** One confirmed structure, in the order it was found (= distance order in smart mode). */

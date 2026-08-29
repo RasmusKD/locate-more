@@ -154,6 +154,50 @@ public final class BiomeLocate {
      * the worker needs is snapshotted here on the server thread.
      */
     public static int start(CommandSourceStack source, ResourceOrTagArgument.Result<Biome> target, int count) {
+        return start(source, target, count, 0);
+    }
+
+    /**
+     * Pure-math probe for the constellation command: the first target biome
+     * column within radius of center, walking rings outward, or null. Plain
+     * full climate samples only, no shortcut tiers, so per the iron rule no
+     * referee is needed; every input is captured on the server thread by
+     * the caller, so this runs on any thread.
+     */
+    static BlockPos anyWithin(BiomeSource biomeSource, Climate.Sampler sampler, int[] sampleYs,
+            Set<Holder<Biome>> targets, BlockPos center, int radius) {
+        long radiusSqr = (long) radius * radius;
+        int maxRing = radius / HORIZ_STEP + 1;
+        for (int ring = 0; ring <= maxRing; ring++) {
+            for (int dx = -ring; dx <= ring; dx++) {
+                for (int dz = -ring; dz <= ring; dz++) {
+                    if (Math.max(Math.abs(dx), Math.abs(dz)) != ring) {
+                        continue;
+                    }
+                    long ox = (long) dx * HORIZ_STEP;
+                    long oz = (long) dz * HORIZ_STEP;
+                    if (ox * ox + oz * oz > radiusSqr) {
+                        continue;
+                    }
+                    int x = center.getX() + (int) ox;
+                    int z = center.getZ() + (int) oz;
+                    int noiseX = QuartPos.fromBlock(x);
+                    int noiseZ = QuartPos.fromBlock(z);
+                    for (int y : sampleYs) {
+                        Holder<Biome> biome = biomeSource.getNoiseBiome(
+                                noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                        if (targets.contains(biome)) {
+                            return new BlockPos(x, y, z);
+                        }
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    public static int start(CommandSourceStack source, ResourceOrTagArgument.Result<Biome> target,
+            int count, int minDistanceBlocks) {
         ServerLevel level = source.getLevel();
         BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
         String printable = target.asPrintable();
@@ -200,6 +244,7 @@ public final class BiomeLocate {
                 source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console-biome",
                 candidates, count, origin, sampleYs,
                 biomeSource, sampler, multiNoise, prefilter);
+        task.minDistSqr = (long) minDistanceBlocks * minDistanceBlocks;
 
         LOGGER.debug("Biome search {} ({}): climate shortcut {}, prefilter {}", printable,
                 level.dimension().identifier(), multiNoise != null ? "active" : "off",
@@ -638,6 +683,12 @@ public final class BiomeLocate {
 
         final AtomicBoolean aborted;
 
+        /** Hits nearer than this are dropped at the accept site, and whole
+         * inner rings are skipped exactly: ring r's farthest column sits at
+         * r*32*sqrt(2), pure grid geometry with no worldgen input, so the
+         * skip needs no referee. */
+        long minDistSqr;
+
         Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
                 AtomicBoolean aborted, Object key,
                 Set<Holder<Biome>> candidates, int count, BlockPos origin, int[] sampleYs,
@@ -719,6 +770,9 @@ public final class BiomeLocate {
             ArrayList<Column> frontier = new ArrayList<>();
             int consumed = 0;
             int nextRing = 0;
+            while (nextRing < maxRing && square((long) nextRing * HORIZ_STEP) * 2L < minDistSqr) {
+                nextRing++;
+            }
             List<Hit> hits = new ArrayList<>();
             long columns = 0;
             List<Column> batch = new ArrayList<>(BATCH);
@@ -790,7 +844,8 @@ public final class BiomeLocate {
                         }
                         BlockPos found = chunkResults[i];
                         Column column = batch.get(c * chunk + i);
-                        if (found != null && farEnough(hits, column, separationSqr)) {
+                        if (found != null && column.distSqr() >= minDistSqr
+                                && farEnough(hits, column, separationSqr)) {
                             Hit hit = new Hit(found, column.distSqr());
                             hits.add(hit);
                             streamHit(hits.size(), hit);

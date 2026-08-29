@@ -147,7 +147,11 @@ public final class AsyncLocate {
      */
     public static boolean idle() {
         return ACTIVE.isEmpty() && INCOMING_LOADS.isEmpty() && loadsInFlight == 0
-                && WAITING_PLAYERS.isEmpty() && WAITING_API.isEmpty();
+                && WAITING_PLAYERS.isEmpty() && WAITING_API.isEmpty()
+                // Constellation runs orchestrate API searches with gaps
+                // between them; without this the battery would advance in
+                // one of those gaps and interleave output.
+                && NearSearch.idle();
     }
 
     private static synchronized ExecutorService mathPool() {
@@ -215,8 +219,14 @@ public final class AsyncLocate {
     // ------------------------------------------------------------------
 
     public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders, int count) {
+        return start(source, printable, holders, count, 0);
+    }
+
+    public static int start(CommandSourceStack source, String printable, HolderSet<Structure> holders,
+            int count, int minDistanceBlocks) {
         Object key = source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console";
         Task task = buildTask(source, key, printable, holders, count);
+        task.minDistSqr = (long) minDistanceBlocks * minDistanceBlocks;
 
         Task previous = ACTIVE.get(key);
         if (previous != null) {
@@ -740,6 +750,12 @@ public final class AsyncLocate {
         long wallClockMs = Config.wallClockSeconds() * 1000L;
         boolean allowGeneration = Config.allowProbeChunkGeneration();
         final java.util.Set<LocateMore.DedupKey> preExcluded = new java.util.HashSet<>();
+        /** Hits nearer than this are found, deduplicated and then dropped:
+         * a pure accept-side filter, so ordering and every trust rule stay
+         * untouched. Starting the rings farther out instead is NOT exact:
+         * ring bounds are lower bounds, and a legacy re-queue can correct a
+         * queued distance upward across the threshold. */
+        long minDistSqr;
 
         final AtomicBoolean aborted;
         /** Released by every shadow and load completion, so the worker wakes
@@ -1057,7 +1073,11 @@ public final class AsyncLocate {
             List<Long> locked = new ArrayList<>();
             for (LocateMore.Candidate candidate : buffered) {
                 LocateMore.VerifyResult found = candidate.resolved();
-                if (distinct.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))) {
+                // Mirrors the accept filter exactly: an under-minimum hit
+                // will be dropped there, so it must not fence out the load
+                // that could produce a countable one.
+                if (distinct.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))
+                        && LocateMore.horizDistSqr(found.pos(), origin) >= minDistSqr) {
                     locked.add(candidate.distSqr());
                 }
             }
@@ -1098,8 +1118,10 @@ public final class AsyncLocate {
                 if (seen.add(new LocateMore.DedupKey(found.startChunk().pack(), found.holder().value()))) {
                     LocateMore.Hit hit = new LocateMore.Hit(found.pos().immutable(), found.holder(),
                             LocateMore.horizDistSqr(found.pos(), origin));
-                    hits.add(hit);
-                    streamHit(hits.size(), hit);
+                    if (hit.horizDistSqr() >= minDistSqr) {
+                        hits.add(hit);
+                        streamHit(hits.size(), hit);
+                    }
                 }
             }
         }

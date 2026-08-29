@@ -188,8 +188,9 @@ marks the contract.
 
 | command | what |
 |---|---|
-| `/locate structure <id\|#tag> <count>` | async search, streams the N nearest |
-| `/locate biome <id\|#tag> <count>` | async biome search, N distinct patches |
+| `/locate structure <id\|#tag> <count> [min_distance]` | async search, streams the N nearest (optionally at least that far away) |
+| `/locate biome <id\|#tag> <count> [min_distance]` | async biome search, N distinct patches |
+| `/locatemore near structure <a> structure\|biome <b> <radius>` | the nearest a with a b within radius, e.g. a village next to a desert |
 | `/locatemore track <x> <y> <z> <name>` | live distance + arrow in the action bar, self-clearing |
 | `/locatemore compass <x> <y> <z> <name>` | named compass pointing at the spot |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
@@ -199,7 +200,7 @@ marks the contract.
 Operator permission required, same as vanilla `/locate`. With a permissions
 mod (LuckPerms etc.) the `/locatemore` subcommands can be granted individually:
 `locatemore.track`, `locatemore.compass`, `locatemore.prune`,
-`locatemore.verify`. Structure tags and
+`locatemore.verify`, `locatemore.near`. Structure tags and
 all dimensions work. Vanilla clients on a dedicated server see correct output,
 because every line uses vanilla translation keys.
 

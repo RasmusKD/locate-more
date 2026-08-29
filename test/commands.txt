@@ -19,3 +19,7 @@ gamerule locatemore:exact_locate false
 execute positioned 0.0 100.0 0.0 run locate biome minecraft:desert
 gamerule locatemore:exact_locate true
 execute positioned 0.0 100.0 0.0 run locate biome minecraft:desert
+execute positioned 0.0 100.0 0.0 run locate structure #minecraft:village 3 1500
+execute positioned 0.0 100.0 0.0 run locate biome minecraft:desert 3 3000
+execute positioned 0.0 100.0 0.0 run locatemore near structure #minecraft:village biome minecraft:desert 512
+execute positioned 0.0 100.0 0.0 run locatemore near structure #minecraft:village structure minecraft:pillager_outpost 1024
