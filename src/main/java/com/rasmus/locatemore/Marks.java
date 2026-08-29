@@ -49,7 +49,7 @@ final class Marks {
     static void init() {
         net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents.AFTER_DEATH.register(
                 (entity, damageSource) -> {
-                    if (entity instanceof ServerPlayer player) {
+                    if (Config.deathMark() && entity instanceof ServerPlayer player) {
                         Map<String, GlobalPos> marks = new HashMap<>(player.getAttachedOrElse(MARKS, Map.of()));
                         marks.put("death", GlobalPos.of(player.level().dimension(), player.blockPosition()));
                         player.setAttached(MARKS, Map.copyOf(marks));
@@ -57,7 +57,7 @@ final class Marks {
                 });
         net.fabricmc.fabric.api.entity.event.v1.ServerPlayerEvents.AFTER_RESPAWN.register(
                 (oldPlayer, newPlayer, alive) -> {
-                    if (alive) {
+                    if (alive || !Config.deathMark()) {
                         return;
                     }
                     GlobalPos death = newPlayer.getAttachedOrElse(MARKS, Map.of()).get("death");

@@ -56,6 +56,10 @@ public final class Config {
      * nearest one.
      */
     private static volatile int biomeSeparationBlocks = 512;
+    /** Dying auto-saves the "death" mark and links it in the respawn
+     * message; servers that treat death coordinates as gameplay (hardcore
+     * flavors) can turn it off here. */
+    private static volatile boolean deathMark = true;
 
     private Config() {
     }
@@ -92,6 +96,10 @@ public final class Config {
         return biomeMaxDistanceBlocks;
     }
 
+    public static boolean deathMark() {
+        return deathMark;
+    }
+
     public static int biomeSeparationBlocks() {
         return biomeSeparationBlocks;
     }
@@ -121,6 +129,9 @@ public final class Config {
                     if (json.has("allowProbeChunkGeneration")) {
                         allowProbeChunkGeneration = json.get("allowProbeChunkGeneration").getAsBoolean();
                     }
+                    if (json.has("deathMark")) {
+                        deathMark = json.get("deathMark").getAsBoolean();
+                    }
                     if (json.has("improveVanillaLocate")) {
                         improveVanillaLocate = json.get("improveVanillaLocate").getAsBoolean();
                     }
@@ -146,6 +157,7 @@ public final class Config {
         out.addProperty("improveVanillaLocate", improveVanillaLocate);
         out.addProperty("biomeMaxDistanceBlocks", biomeMaxDistanceBlocks);
         out.addProperty("biomeSeparationBlocks", biomeSeparationBlocks);
+        out.addProperty("deathMark", deathMark);
         try {
             Files.createDirectories(path.getParent());
             Files.writeString(path, gson.toJson(out), StandardCharsets.UTF_8);
