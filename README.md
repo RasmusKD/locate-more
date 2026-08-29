@@ -190,7 +190,7 @@ marks the contract.
 |---|---|
 | `/locate structure <id\|#tag> <count> [min_distance]` | async search, streams the N nearest (optionally at least that far away) |
 | `/locate biome <id\|#tag> <count> [min_distance]` | async biome search, N distinct patches |
-| `/locatemore near structure <a> structure\|biome <b> <radius>` | the nearest a with a b within radius, e.g. a village next to a desert |
+| `/locatemore near structure\|biome <a> structure\|biome <b> <radius>` | the nearest a with a b within radius, e.g. a village next to a desert (mixed pairs put the structure first) |
 | `/locatemore track <x> <y> <z> <name>` | live distance + arrow in the action bar, self-clearing |
 | `/locatemore compass <x> <y> <z> <name>` | named compass pointing at the spot |
 | `/locatemore verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |

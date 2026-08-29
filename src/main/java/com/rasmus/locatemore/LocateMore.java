@@ -229,7 +229,16 @@ public class LocateMore implements ModInitializer {
                                                                 "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
                                                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
                                                                         "radius", IntegerArgumentType.integer(32, 2048))
-                                                                .executes(NearSearch::structureNearBiome)))))))
+                                                                .executes(NearSearch::structureNearBiome))))))
+                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
+                                .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
+                                                "biome", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                        .then(LiteralArgumentBuilder.<CommandSourceStack>literal("biome")
+                                                .then(RequiredArgumentBuilder.<CommandSourceStack, net.minecraft.commands.arguments.ResourceOrTagArgument.Result<net.minecraft.world.level.biome.Biome>>argument(
+                                                                "other", net.minecraft.commands.arguments.ResourceOrTagArgument.resourceOrTag(buildContext, Registries.BIOME))
+                                                        .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument(
+                                                                        "radius", IntegerArgumentType.integer(32, 2048))
+                                                                .executes(NearSearch::biomeNearBiome)))))))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("track")
                         .requires(track)
                         .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {

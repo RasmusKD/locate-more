@@ -158,6 +158,40 @@ public final class BiomeLocate {
     }
 
     /**
+     * Constellation front door: the ordinary engine from the source's own
+     * position, but hits complete a future (on the server thread) instead
+     * of going to chat. Results are a deterministic distance-ordered
+     * prefix, so an escalating caller re-requests with a larger count and
+     * skips the indexes it already probed; no exclusion plumbing needed.
+     */
+    static java.util.concurrent.CompletableFuture<List<BlockPos>> startForNear(
+            CommandSourceStack source, String printable, Set<Holder<Biome>> candidates, int count) {
+        ServerLevel level = source.getLevel();
+        BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
+        BlockPos origin = BlockPos.containing(source.getPosition());
+        int[] sampleYs = Mth.outFromOrigin(origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, VERT_STEP)
+                .toArray();
+        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        MultiNoiseBiomeSource multiNoise =
+                biomeSource instanceof MultiNoiseBiomeSource mn
+                        && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
+                        ? mn : null;
+        Prefilter prefilter = buildPrefilter(multiNoise, candidates, sampler);
+        AtomicBoolean abortFlag = new AtomicBoolean();
+        SearchSession session = new SearchSession(source.getServer(), level.dimension(), source,
+                printable, abortFlag::get);
+        Task task = new Task(source.getServer(), level.dimension(), session, abortFlag,
+                new Object(), candidates, count, origin, sampleYs,
+                biomeSource, sampler, multiNoise, prefilter);
+        java.util.concurrent.CompletableFuture<List<BlockPos>> sink =
+                new java.util.concurrent.CompletableFuture<>();
+        task.apiSink = sink;
+        ACTIVE.put(task.key, task);
+        workerExecutor().execute(task::run);
+        return sink;
+    }
+
+    /**
      * Pure-math probe for the constellation command: the first target biome
      * column within radius of center, walking rings outward, or null. Plain
      * full climate samples only, no shortcut tiers, so per the iron rule no
@@ -688,6 +722,8 @@ public final class BiomeLocate {
          * r*32*sqrt(2), pure grid geometry with no worldgen input, so the
          * skip needs no referee. */
         long minDistSqr;
+        /** When set, results complete this future instead of going to chat. */
+        volatile java.util.concurrent.CompletableFuture<List<BlockPos>> apiSink;
 
         Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
                 AtomicBoolean aborted, Object key,
@@ -1039,6 +1075,9 @@ public final class BiomeLocate {
         }
 
         private void streamHit(int number, Hit hit) {
+            if (apiSink != null) {
+                return;
+            }
             session.chat(() -> hitLine(number, hit.pos(), hit.distSqr(), session.printable, origin));
         }
 
@@ -1079,6 +1118,16 @@ public final class BiomeLocate {
         private void finish(List<Hit> hits, long startNanos, Throwable error) {
             long tookMs = (System.nanoTime() - startNanos) / 1_000_000L;
             session.closeBossBar();
+            java.util.concurrent.CompletableFuture<List<BlockPos>> sink = apiSink;
+            if (sink != null) {
+                List<BlockPos> positions = hits.stream().map(Hit::pos).toList();
+                if (error != null) {
+                    server.execute(() -> sink.completeExceptionally(error));
+                } else {
+                    server.execute(() -> sink.complete(positions));
+                }
+                return;
+            }
             if (error != null) {
                 session.fail(Component.literal("Search failed: "
                         + error.getClass().getSimpleName() + " (see log)"));
