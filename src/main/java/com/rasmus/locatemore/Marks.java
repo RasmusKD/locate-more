@@ -109,9 +109,7 @@ final class Marks {
         return 1;
     }
 
-    /** Existing mark names as suggestions: without them the only visible
-     * completion is the remove literal, which reads like the only option
-     * instead of one of many possible names. */
+    /** Existing mark names as suggestions on every name slot. */
     static java.util.concurrent.CompletableFuture<com.mojang.brigadier.suggestion.Suggestions> suggest(
             CommandContext<CommandSourceStack> ctx,
             com.mojang.brigadier.suggestion.SuggestionsBuilder builder) {
@@ -131,15 +129,10 @@ final class Marks {
             return 0;
         }
         String name = StringArgumentType.getString(ctx, "name");
-        if (name.equals("remove")) {
-            // The remove subcommand shadows it, so it could never be used.
-            ctx.getSource().sendFailure(Component.literal("remove is the delete subcommand; pick another name."));
-            return 0;
-        }
         Map<String, GlobalPos> marks = new HashMap<>(player.getAttachedOrElse(MARKS, Map.of()));
         if (!marks.containsKey(name) && marks.size() >= MAX_MARKS) {
             ctx.getSource().sendFailure(Component.literal(
-                    MAX_MARKS + " marks is the cap; remove one first."));
+                    MAX_MARKS + " marks is the cap; unmark one first."));
             return 0;
         }
         GlobalPos pos = GlobalPos.of(player.level().dimension(), player.blockPosition());

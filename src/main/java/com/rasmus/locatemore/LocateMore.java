@@ -252,6 +252,7 @@ public class LocateMore implements ModInitializer {
                 .then(trackTree().requires(track))
                 .then(compassTree().requires(compass))
                 .then(markTree().requires(mark))
+                .then(unmarkTree().requires(mark))
                 .then(pruneTree().requires(prune))
                 .then(verifyTree().requires(verify)));
     }
@@ -262,6 +263,7 @@ public class LocateMore implements ModInitializer {
         graftAlias(locate, "track", trackTree().requires(perm("track")));
         graftAlias(locate, "compass", compassTree().requires(perm("compass")));
         graftAlias(locate, "mark", markTree().requires(perm("mark")));
+        graftAlias(locate, "unmark", unmarkTree().requires(perm("mark")));
         graftAlias(locate, "prune", pruneTree().requires(perm("prune")));
         graftAlias(locate, "verify", verifyTree().requires(perm("verify")));
     }
@@ -354,18 +356,24 @@ public class LocateMore implements ModInitializer {
                                                 .executes(HitPresentation::giveCompass)))));
     }
 
+    // Set and delete deliberately do not share a node: a delete literal
+    // competing with free-form names in the same slot reads like the only
+    // valid input (the sethome/delhome lesson).
     private static LiteralArgumentBuilder<CommandSourceStack> markTree() {
         return LiteralArgumentBuilder.<CommandSourceStack>literal("mark")
                 .executes(Marks::list)
-                .then(LiteralArgumentBuilder.<CommandSourceStack>literal("remove")
-                        .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
-                                        com.mojang.brigadier.arguments.StringArgumentType.word())
-                                .suggests(Marks::suggest)
-                                .executes(Marks::remove)))
                 .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
                                 com.mojang.brigadier.arguments.StringArgumentType.word())
                         .suggests(Marks::suggest)
                         .executes(Marks::set));
+    }
+
+    private static LiteralArgumentBuilder<CommandSourceStack> unmarkTree() {
+        return LiteralArgumentBuilder.<CommandSourceStack>literal("unmark")
+                .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
+                                com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .suggests(Marks::suggest)
+                        .executes(Marks::remove));
     }
 
     private static LiteralArgumentBuilder<CommandSourceStack> pruneTree() {

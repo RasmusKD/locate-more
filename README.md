@@ -103,7 +103,7 @@ turns off chunk generation (`mathOnly()`), and excludes previous hits.
 | `/locate biome <id\|#tag> <count> [min_distance]` | async biome search, N distinct patches |
 | `/locate poi <id\|#tag> <count> [min_distance]` | async poi search over all explored terrain |
 | `/locate near structure\|biome <a> structure\|biome <b> [radius]` | the nearest a with a b within radius (default 512), e.g. a village next to a desert (mixed pairs put the structure first) |
-| `/locate mark [name]` | save the spot you stand on / list your marks, each with the buttons below; dying auto-marks `death` and the respawn message links it |
+| `/locate mark [name]` / `/locate unmark <name>` | save the spot you stand on / list your marks, each with the buttons below; dying auto-marks `death` and the respawn message links it |
 | `/locate track <mark\|x y z name>` | live distance + arrow in the action bar, self-clearing |
 | `/locate compass <mark\|x y z name>` | named compass pointing at the spot |
 | `/locate verify <structure>` | drift tripwire: shadow parse vs vanilla over 20 chunks |
