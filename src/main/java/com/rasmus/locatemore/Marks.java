@@ -109,12 +109,33 @@ final class Marks {
         return 1;
     }
 
+    /** Existing mark names as suggestions: without them the only visible
+     * completion is the remove literal, which reads like the only option
+     * instead of one of many possible names. */
+    static java.util.concurrent.CompletableFuture<com.mojang.brigadier.suggestion.Suggestions> suggest(
+            CommandContext<CommandSourceStack> ctx,
+            com.mojang.brigadier.suggestion.SuggestionsBuilder builder) {
+        if (ctx.getSource().getEntity() instanceof ServerPlayer player) {
+            for (String name : new TreeMap<>(player.getAttachedOrElse(MARKS, Map.of())).keySet()) {
+                if (name.startsWith(builder.getRemaining())) {
+                    builder.suggest(name);
+                }
+            }
+        }
+        return builder.buildFuture();
+    }
+
     static int set(CommandContext<CommandSourceStack> ctx) {
         if (!(ctx.getSource().getEntity() instanceof ServerPlayer player)) {
             ctx.getSource().sendFailure(Component.literal("Marks belong to a player."));
             return 0;
         }
         String name = StringArgumentType.getString(ctx, "name");
+        if (name.equals("remove")) {
+            // The remove subcommand shadows it, so it could never be used.
+            ctx.getSource().sendFailure(Component.literal("remove is the delete subcommand; pick another name."));
+            return 0;
+        }
         Map<String, GlobalPos> marks = new HashMap<>(player.getAttachedOrElse(MARKS, Map.of()));
         if (!marks.containsKey(name) && marks.size() >= MAX_MARKS) {
             ctx.getSource().sendFailure(Component.literal(

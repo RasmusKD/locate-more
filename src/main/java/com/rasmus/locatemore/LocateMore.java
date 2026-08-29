@@ -311,6 +311,7 @@ public class LocateMore implements ModInitializer {
         return LiteralArgumentBuilder.<CommandSourceStack>literal("track")
                 .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("mark",
                                 com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .suggests(Marks::suggest)
                         .executes(Marks::trackByName))
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("off").executes(ctx -> {
                     if (ctx.getSource().getEntity() instanceof net.minecraft.server.level.ServerPlayer player
@@ -343,6 +344,7 @@ public class LocateMore implements ModInitializer {
         return LiteralArgumentBuilder.<CommandSourceStack>literal("compass")
                 .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("mark",
                                 com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .suggests(Marks::suggest)
                         .executes(Marks::compassByName))
                 .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("x", IntegerArgumentType.integer())
                         .then(RequiredArgumentBuilder.<CommandSourceStack, Integer>argument("y", IntegerArgumentType.integer())
@@ -358,9 +360,11 @@ public class LocateMore implements ModInitializer {
                 .then(LiteralArgumentBuilder.<CommandSourceStack>literal("remove")
                         .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
                                         com.mojang.brigadier.arguments.StringArgumentType.word())
+                                .suggests(Marks::suggest)
                                 .executes(Marks::remove)))
                 .then(RequiredArgumentBuilder.<CommandSourceStack, String>argument("name",
                                 com.mojang.brigadier.arguments.StringArgumentType.word())
+                        .suggests(Marks::suggest)
                         .executes(Marks::set));
     }
 
