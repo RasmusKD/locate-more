@@ -1292,7 +1292,7 @@ public final class AsyncLocate {
             if (apiSink != null) {
                 return;
             }
-            session.chat(() -> LocateMore.hitLine(number, hit, session.printable, origin));
+            session.chat(() -> HitPresentation.hitLine(number, hit, session.printable, origin));
         }
 
         private void pushProgress(int found, int checked, long startNanos) {

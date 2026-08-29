@@ -676,7 +676,7 @@ public final class BiomeLocate {
     }
 
     /** Sorted, overlap-merged [min,max] pairs, flattened. */
-    private static long[] mergeIntervals(List<long[]> raw) {
+    static long[] mergeIntervals(List<long[]> raw) {
         raw.sort(Comparator.comparingLong(a -> a[0]));
         List<long[]> merged = new ArrayList<>();
         for (long[] interval : raw) {
@@ -1090,7 +1090,7 @@ public final class BiomeLocate {
                 BlockPos origin) {
             int distance = Mth.floor(Mth.sqrt((float) distSqr));
             String heading = distance >= 16
-                    ? LocateMore.octant(pos.getX() - origin.getX(), pos.getZ() - origin.getZ())
+                    ? HitPresentation.octant(pos.getX() - origin.getX(), pos.getZ() - origin.getZ())
                     : "away";
             Component coordinates = ComponentUtils.wrapInSquareBrackets(Component.translatable("chat.coordinates",
                             pos.getX(), pos.getY(), pos.getZ()))
@@ -1099,13 +1099,13 @@ public final class BiomeLocate {
                                     "/tp @s " + pos.getX() + " " + pos.getY() + " " + pos.getZ()))
                             .withHoverEvent(new HoverEvent.ShowText(
                                     Component.translatable("chat.coordinates.tooltip"))));
-            String name = LocateMore.trackName(printable, number);
+            String name = HitPresentation.trackName(printable, number);
             return Component.literal(number + ". ")
                     .append(coordinates)
                     .append(Component.literal(" (" + distance + " blocks " + heading + ") "))
-                    .append(LocateMore.trackButton(pos.getX(), pos.getY(), pos.getZ(), name))
+                    .append(HitPresentation.trackButton(pos.getX(), pos.getY(), pos.getZ(), name))
                     .append(Component.literal(" "))
-                    .append(LocateMore.compassButton(pos.getX(), pos.getY(), pos.getZ(), name));
+                    .append(HitPresentation.compassButton(pos.getX(), pos.getY(), pos.getZ(), name));
         }
 
         private void pushProgress(int found, long columns, long startNanos) {

@@ -279,7 +279,7 @@ final class NearSearch {
         int apart = Mth.floor(Math.sqrt(dx * dx + dz * dz));
         session.chat(() -> Component.literal("Nearest " + printableA + " with " + printableB
                 + " nearby:").withStyle(ChatFormatting.GRAY));
-        session.chat(() -> LocateMore.hitLine(1, aHit, printableA, origin));
+        session.chat(() -> HitPresentation.hitLine(1, aHit, printableA, origin));
         session.chat(() -> Component.literal("   " + printableB + " at [" + bPos.getX() + ", "
                 + bPos.getZ() + "] (" + apart + " blocks from it)").withStyle(ChatFormatting.GRAY));
     }

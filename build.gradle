@@ -18,6 +18,7 @@ loom {
 }
 
 repositories {
+    mavenCentral()
     exclusiveContent {
         forRepository {
             maven {
@@ -38,6 +39,16 @@ dependencies {
     // Bundled (jar-in-jar): without a permissions mod every check falls back
     // to the vanilla op level, so behavior is unchanged for everyone else.
     include(implementation("maven.modrinth:fabric-permissions-api:${project.permissions_api_version}"))
+    testImplementation platform("org.junit:junit-bom:5.11.4")
+    testImplementation "org.junit.jupiter:junit-jupiter"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+}
+
+// The pure-math slice: replicated logic with no server, no bootstrap, no
+// battery boot. The battery stays the release gate; these catch formula
+// regressions in seconds during development.
+tasks.named('test') {
+    useJUnitPlatform()
 }
 
 processResources {
