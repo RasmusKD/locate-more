@@ -1,1 +1,3 @@
 test/golden/*.txt -text
+# Shell scripts run under sh/bash on every OS; a CRLF checkout breaks them.
+*.sh text eol=lf

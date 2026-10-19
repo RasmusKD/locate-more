@@ -23,13 +23,19 @@ import net.minecraft.commands.arguments.ResourceOrTagKeyArgument;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.core.HolderSet;
+import net.minecraft.core.QuartPos;
 import net.minecraft.core.Registry;
 import net.minecraft.core.registries.Registries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.ComponentUtils;
+import net.minecraft.resources.Identifier;
+import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
+import net.minecraft.world.level.biome.Biome;
+import net.minecraft.world.level.biome.Climate;
+import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
 import net.minecraft.world.level.levelgen.structure.Structure;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,6 +54,10 @@ import org.slf4j.LoggerFactory;
  * <li>{@code lmlab ranges}: checks the climate bounds the biome engine's certified
  * shortcuts rely on against sampled values (a bound that is not a bound makes
  * a proof unsound).</li>
+ * <li>{@code lmlab climate <x> <y> <z> <biome>}: the quart sample at that block,
+ * its six quantized climate values, the biome vanilla's sampler picks there, the
+ * best target and non-target fitness, and the biome engine's prefilter verdicts
+ * for that biome (the minimal reproduction for a prefilter miss).</li>
  * <li>{@code lmlab pause <ticks>}: holds the battery for that many ticks (chunk
  * generation from forceload runs off the engines' idleness signal).</li>
  * <li>{@code lmlab battery <file>}: runs a command list from the game directory
@@ -85,6 +95,12 @@ public final class LabMod implements ModInitializer {
                         .then(Commands.literal("on").executes(ctx -> bypass(ctx, true)))
                         .then(Commands.literal("off").executes(ctx -> bypass(ctx, false))))
                 .then(Commands.literal("ranges").executes(LabMod::ranges))
+                .then(Commands.literal("climate")
+                        .then(Commands.argument("x", IntegerArgumentType.integer())
+                                .then(Commands.argument("y", IntegerArgumentType.integer())
+                                        .then(Commands.argument("z", IntegerArgumentType.integer())
+                                                .then(Commands.argument("biome", StringArgumentType.greedyString())
+                                                        .executes(LabMod::climate))))))
                 .then(Commands.literal("pause")
                         .then(Commands.argument("ticks", IntegerArgumentType.integer(1, 100000))
                                 .executes(ctx -> {
@@ -195,6 +211,94 @@ public final class LabMod implements ModInitializer {
         final int total = outside;
         ctx.getSource().sendSuccess(() -> Component.literal("RANGES outside=" + total), false);
         return outside;
+    }
+
+    private static int climate(CommandContext<CommandSourceStack> ctx) {
+        int x = IntegerArgumentType.getInteger(ctx, "x");
+        int y = IntegerArgumentType.getInteger(ctx, "y");
+        int z = IntegerArgumentType.getInteger(ctx, "z");
+        String id = StringArgumentType.getString(ctx, "biome").trim();
+        CommandSourceStack source = ctx.getSource();
+        ServerLevel level = source.getLevel();
+        Registry<Biome> registry = level.registryAccess().lookupOrThrow(Registries.BIOME);
+        Holder<Biome> target = registry.get(ResourceKey.create(Registries.BIOME, Identifier.parse(id))).orElse(null);
+        if (target == null) {
+            source.sendFailure(Component.literal("Unknown biome " + id));
+            return 0;
+        }
+        if (!(level.getChunkSource().getGenerator().getBiomeSource() instanceof MultiNoiseBiomeSource multiNoise)) {
+            source.sendFailure(Component.literal("Not a multinoise dimension"));
+            return 0;
+        }
+        ClimateAccess climate = ClimateAccess.of(level);
+        int qx = QuartPos.fromBlock(x);
+        int qy = QuartPos.fromBlock(y);
+        int qz = QuartPos.fromBlock(z);
+        int bx = QuartPos.toBlock(qx);
+        int by = QuartPos.toBlock(qy);
+        int bz = QuartPos.toBlock(qz);
+        String[] names = {"temperature", "humidity", "continentalness", "erosion", "weirdness", "depth"};
+        long[] q = new long[6];
+        StringBuilder values = new StringBuilder("CLIMATE at quart block " + bx + " " + by + " " + bz + ":");
+        for (int dim = 0; dim < 6; dim++) {
+            float v = climate.flat(dim, bx, by, bz);
+            q[dim] = Climate.quantizeCoord(v);
+            values.append(' ').append(names[dim]).append('=').append(v).append(" (").append(q[dim]).append(')');
+        }
+        report(source, values.toString());
+        Holder<Biome> picked = climate.biome(multiNoise, qx, qy, qz);
+        report(source, "CLIMATE vanilla sampler picks " + picked.getRegisteredName());
+        var points = ((com.rasmus.locatemore.mixin.MultiNoiseBiomeSourceInvoker) multiNoise)
+                .locatemore$parameters().values();
+        long bestTarget = Long.MAX_VALUE;
+        long bestOther = Long.MAX_VALUE;
+        String other = "";
+        for (var pair : points) {
+            long fitness = ProvenRejection.fitness(pair.getFirst(), q);
+            if (pair.getSecond() == target) {
+                bestTarget = Math.min(bestTarget, fitness);
+            } else if (fitness < bestOther) {
+                bestOther = fitness;
+                other = pair.getSecond().getRegisteredName();
+            }
+        }
+        report(source, "CLIMATE best fitness: target " + bestTarget + ", non-target " + bestOther + " (" + other + ")");
+        for (int dim = 0; dim < 5; dim++) {
+            List<long[]> raw = new java.util.ArrayList<>();
+            for (var pair : points) {
+                if (pair.getSecond() == target) {
+                    Climate.Parameter p = ProvenRejection.parameter(pair.getFirst(), dim);
+                    raw.add(new long[]{p.min(), p.max()});
+                }
+            }
+            long[] declared = BiomeLocate.mergeIntervals(raw);
+            long[] proven = ProvenRejection.rejected(dim, points, h -> h == target);
+            report(source, "CLIMATE dim " + names[dim] + ": declared target union "
+                    + java.util.Arrays.toString(declared) + " contains sample: " + inside(declared, q[dim])
+                    + "; proven rejection " + java.util.Arrays.toString(proven) + " contains sample: "
+                    + inside(proven, q[dim]));
+        }
+        BiomeLocate.Prefilter prefilter = BiomeLocate.buildPrefilter(multiNoise, java.util.Set.of(target), climate);
+        if (prefilter == null) {
+            report(source, "CLIMATE prefilter: none");
+        } else {
+            report(source, "CLIMATE prefilter: " + prefilter.describe(q));
+        }
+        return 1;
+    }
+
+    private static boolean inside(long[] flat, long value) {
+        for (int i = 0; i < flat.length; i += 2) {
+            if (value >= flat[i] && value <= flat[i + 1]) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void report(CommandSourceStack source, String line) {
+        LOGGER.info(line);
+        source.sendSuccess(() -> Component.literal(line), false);
     }
 
     private static int battery(CommandContext<CommandSourceStack> ctx) {

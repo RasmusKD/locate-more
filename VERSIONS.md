@@ -53,8 +53,23 @@ Proof: `test/run.sh` golden (`MC_TARGET=26.3`) and `test/oracle.py`, which compa
 17 overworld biomes, 5 nether, 2 end and 4 pois, and re-asks vanilla from every answer that was nearer than vanilla's.
 See `PORTING.md`.
 
-Open, identical on 26.1.2 and 26.3 (not a port regression): `locate biome minecraft:lush_caves` at 0 100 0 answers
-[0, 36, -576] where vanilla finds [352, -28, -320], 84 blocks nearer. The heuristic parameter-interval prefilter (not the
-certified tier) skips the column, and its referee then revokes it for the session ("Interval referee disagreement").
+Fixed on both lines (it was never a port regression): `locate biome minecraft:lush_caves` at 0 100 0 answered
+[0, 36, -576] where vanilla finds [352, -28, -320]. The biome prefilter's heuristic tier rejected every column whose value of
+one flat climate dimension lay outside the target's declared intervals. Multinoise is nearest-point, so that is not a bound:
+at vanilla's hit (`lmlab climate 352 -28 -320 minecraft:lush_caves`, identical on 26.1.2 and 26.3) humidity is 0.35, far
+below lush caves' declared 0.7..1, and lush caves still wins (fitness 0.1225 against river's 0.1455) because the depth is
+0.62 and every surface point sits at depth 0 or 1. The miss was silent: the 1-in-64 referee saw no lush column, and it
+revoked the tier only later, when dripstone caves (same class) hit a referee column, so the answer depended on what the
+session had searched before (the same command answered [192, -28, -384] after the revocation, and dripstone caves from
+0 100 0 answered [-288, 36, -576] or [-224, 36, -544] depending on thread timing). The tier is gone. Columns are now skipped
+only by proofs: the box-cover proof in `ProvenRejection` (non-target points containing the value cover every target box in
+the other five dimensions, so a non-target strictly wins at every y) plus the existing margin proof; `ProvenRejectionTest`
+checks the rule against vanilla's own parameter list by brute force, and fails on the old rule. Lush, dripstone and deep
+dark get no flat prune (none is provable); mushroom fields, river and the surface biomes keep theirs. The proofs are built on
+the biome worker (cached per parameter list and target, about 0.2 s cold on a first search, never on the server thread).
+Measured (biome-only battery, 8 origins, 17 overworld, 5 nether, 2 end biomes): 26.1.2 62.1 s before, 6.9 s after; 26.3
+17.3 s before, 5.9 s after (before, the session had already revoked the heuristic tier at the first origin, so most old
+searches ran unfiltered). Oracle on 26.3 after the fix: 317 pairs, 0 violations, 121 of 121 nearer hits confirmed by
+vanilla, lush caves from 0 100 0 now [192, -28, -384] (429 blocks, nearer than vanilla's 492).
 
 Full 26.3 table: `C:\Users\Rasmus\Desktop\Ny mappe (3)\mc-26.3-splits.md`.
