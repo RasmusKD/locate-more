@@ -47,6 +47,19 @@ loom {
     }
 }
 
+// Dev-only client gametest (src/gametest, never in the jar): opens a singleplayer world and runs the locate
+// commands through the integrated server. ./gradlew runClientGametest [-PmcTarget=26.3]. Headless recipe: the
+// minecraft-mods skill, scripts/smoke/wsl_gametest.ps1.
+fabricApi {
+    configureTests {
+        createSourceSet = true
+        modId = "locatemore-test"
+        enableGameTests = false
+        enableClientGameTests = true
+        eula = true
+    }
+}
+
 repositories {
     mavenCentral()
     exclusiveContent {

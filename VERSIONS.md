@@ -72,4 +72,11 @@ Measured (biome-only battery, 8 origins, 17 overworld, 5 nether, 2 end biomes): 
 searches ran unfiltered). Oracle on 26.3 after the fix: 317 pairs, 0 violations, 121 of 121 nearer hits confirmed by
 vanilla, lush caves from 0 100 0 now [192, -28, -384] (429 blocks, nearer than vanilla's 492).
 
+Version refusal and client proof (1.21.0): the `+26.1` jar declares `minecraft >=26.1 <26.3` and the `+26.3` jar `>=26.3`
+(`mc_range` in `build.gradle`). A 26.3 dedicated server (Fabric launcher, `nogui`, Fabric API 0.163.0+26.3) with the `+26.1` jar stops
+at mod resolution with "Mod 'LocateMore' (locatemore) 1.21.0+26.1 requires any version between 26.1 (inclusive) and 26.3 (exclusive)
+of 'Minecraft'", instead of the `NoClassDefFoundError` on `DensityFunction$FunctionContext` that the 1.20.7 jar (metadata `>=26.1`)
+gave. The client gametest (`src/gametest`, run through the WSL2 + Xvfb wrapper) passes on 26.1.2, 26.2 and 26.3 with the same source:
+village x3, pillager outpost, desert, lush caves and `poi #minecraft:village` x3 all answer in chat.
+
 Full 26.3 table: `C:\Users\Rasmus\Desktop\Ny mappe (3)\mc-26.3-splits.md`.
