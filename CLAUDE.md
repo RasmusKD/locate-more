@@ -8,7 +8,7 @@ Read the `minecraft-mods` skill first (`C:\Users\Rasmus\.claude\skills\minecraft
 
 - Java 25: `JAVA_HOME=C:\Users\Rasmus\.jdks\jdk-25.0.3+9`, then `./gradlew build` (runs the unit tests, `verifyJar` and `verifyMixinClasses`). The jar is `build/libs/locatemore-X.Y.Z+26.1.jar`.
 - `-PmcTarget=26.3` builds `locatemore-X.Y.Z+26.3.jar` (run `clean` between the two variants). 26.3 rewrote the worldgen sampling the mod replicates; the version-specific surface is `ClimateAccess` and `VersionCompat` (26.1 in `src/main`, 26.3 in `src/mc26_3/java`). See `VERSIONS.md`.
-- `src/lab` is the dev-only differential driver (`lmlab` commands, `runLabServer`); it is never packaged. `MC_TARGET=26.3 sh test/run.sh` runs the golden on 26.3; `test/oracle.py` compares the mod against vanilla's own `/locate`.
+- `src/lab` is the dev-only differential driver (`lmlab` commands, `runLabServer`); it is never packaged. `MC_TARGET=26.3 sh test/run.sh` runs the golden on 26.3; `test/oracle.py` compares the mod against vanilla's own `/locate`. `lmlab climate <x> <y> <z> <biome>` prints one quart's six quantized climate values, vanilla's pick, the best target and non-target fitness and the biome prefilter's verdicts: the minimal reproduction for a biome miss.
 - The release gate is the differential run `test/run.sh` (boots a dev server); see `PORTING.md`.
 
 ## Release
