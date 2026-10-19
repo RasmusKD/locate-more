@@ -1,8 +1,8 @@
 name: Publish
 
-# Runs on every push (the verify matrix is the point: ONE jar must compile
-# against BOTH supported Minecraft versions, which are not source
-# compatible) and publishes on version tags:
+# Runs on every push (the verify matrix is the point: the 26.1/26.2 jar and the
+# 26.3 jar are separate builds, each compiled against every Minecraft version it
+# claims, see VERSIONS.md) and publishes on version tags:
 #   git tag v1.13.0 && git push origin v1.13.0
 # Tag as vX.Y.Z and nothing else: mc-publish derives the Modrinth version
 # name from the tag.
@@ -36,6 +36,9 @@ jobs:
             fabric: 0.155.2+26.1.2
           - minecraft: "26.2"
             fabric: 0.158.0+26.2
+          - minecraft: "26.3"
+            fabric: 0.163.0+26.3
+            target: "26.3"
     steps:
       - uses: actions/checkout@v7
 
@@ -47,7 +50,11 @@ jobs:
       - uses: gradle/actions/setup-gradle@v6
 
       - name: Build against ${{ matrix.minecraft }}
-        run: ./gradlew build -Pminecraft_version=${{ matrix.minecraft }} -Pfabric_version=${{ matrix.fabric }}
+        run: >
+          ./gradlew build
+          -Pminecraft_version=${{ matrix.minecraft }}
+          -Pfabric_version=${{ matrix.fabric }}
+          ${{ matrix.target != '' && format('-PmcTarget={0}', matrix.target) || '' }}
 
   publish:
     needs: verify
@@ -67,8 +74,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Build
-        run: ./gradlew build
+      # Two jars: the default build (26.1 and 26.2) and the 26.3 build.
+      - name: Build both jars
+        run: |
+          ./gradlew clean build
+          mkdir dist
+          cp build/libs/*+26.1.jar dist/
+          ./gradlew clean build -PmcTarget=26.3
+          cp build/libs/*+26.3.jar dist/
 
       # Every release gets a changelog without anyone writing one: the
       # commit subjects since the previous tag, minus bare version bumps.
@@ -79,7 +92,7 @@ jobs:
           {
             echo "text<<CHANGELOG_EOF"
             if [ -n "$prev" ]; then
-              git log --pretty='- %s' "$prev..${GITHUB_REF_NAME}" | grep -vE '^- [0-9]+\.[0-9]+\.[0-9]+$' || true
+              git log --pretty='- %s' "$prev..${GITHUB_REF_NAME}" | grep -vE '^- (Version )?[0-9]+\.[0-9]+\.[0-9]+$|^- Version ' || true
             fi
             echo "CHANGELOG_EOF"
           } >> "$GITHUB_OUTPUT"
@@ -89,9 +102,18 @@ jobs:
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           changelog: ${{ steps.changelog.outputs.text }}
-          files: build/libs/!(*-sources).jar
+          files: dist/*+26.1.jar
           loaders: fabric
-          game-versions: ">=26.1"
+          game-versions: ">=26.1 <26.3"
+
+      - name: Publish the 26.3 jar to the GitHub release
+        uses: Kir-Antipov/mc-publish@v3.3
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          changelog: ${{ steps.changelog.outputs.text }}
+          files: dist/*+26.3.jar
+          loaders: fabric
+          game-versions: ">=26.3"
 
       - name: Publish to Modrinth
         if: env.MODRINTH_TOKEN != ''
@@ -102,6 +124,19 @@ jobs:
           modrinth-id: 7Rblt26W
           modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
           changelog: ${{ steps.changelog.outputs.text }}
-          files: build/libs/!(*-sources).jar
+          files: dist/*+26.1.jar
           loaders: fabric
-          game-versions: ">=26.1"
+          game-versions: ">=26.1 <26.3"
+
+      - name: Publish the 26.3 jar to Modrinth
+        if: env.MODRINTH_TOKEN != ''
+        uses: Kir-Antipov/mc-publish@v3.3
+        env:
+          MODRINTH_TOKEN: ${{ secrets.MODRINTH_TOKEN }}
+        with:
+          modrinth-id: 7Rblt26W
+          modrinth-token: ${{ secrets.MODRINTH_TOKEN }}
+          changelog: ${{ steps.changelog.outputs.text }}
+          files: dist/*+26.3.jar
+          loaders: fabric
+          game-versions: ">=26.3"

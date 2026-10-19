@@ -123,7 +123,7 @@ final class HitPresentation {
         compass.set(net.minecraft.core.component.DataComponents.CUSTOM_NAME,
                 Component.literal(name).withStyle(ChatFormatting.AQUA));
         if (!player.getInventory().add(compass)) {
-            player.drop(compass, false);
+            VersionCompat.dropFromPlayer(player, compass);
         }
     }
 

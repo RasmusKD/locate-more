@@ -621,8 +621,7 @@ public class LocateMore implements ModInitializer {
                 continue; // admin forbade probe generation; skip like the async path
             }
             ChunkAccess chunk = level.getChunk(chunkTarget.x(), chunkTarget.z(), ChunkStatus.STRUCTURE_STARTS);
-            StructureStart start = structureManager.getStartForStructure(
-                    SectionPos.bottomOf(chunk), structure.value(), chunk);
+            StructureStart start = VersionCompat.startForStructure(structureManager, chunk, structure.value());
             if (start != null && start.isValid()) {
                 if (skipKnown) {
                     if (!start.canBeReferenced()) {

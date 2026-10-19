@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "locatemore-test",
+  "version": "1.0.0",
+  "name": "LocateMore client gametest",
+  "environment": "client",
+  "entrypoints": {
+    "fabric-client-gametest": [
+      "com.rasmus.locatemore.test.LocatemoreClientGameTest"
+    ]
+  },
+  "depends": {
+    "locatemore": "*"
+  }
+}

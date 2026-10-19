@@ -35,7 +35,6 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
-import net.minecraft.world.level.levelgen.DensityFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,8 +96,8 @@ public final class BiomeLocate {
             }
             ACTIVE.clear();
             CLIMATE_TRUSTED.set(true);
-            PREFILTER_TRUSTED.set(true);
             CERTIFIED_TRUSTED.set(true);
+            PROOFS.clear();
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             for (Task task : ACTIVE.values()) {
@@ -106,8 +105,8 @@ public final class BiomeLocate {
             }
             ACTIVE.clear();
             CLIMATE_TRUSTED.set(true);
-            PREFILTER_TRUSTED.set(true);
             CERTIFIED_TRUSTED.set(true);
+            PROOFS.clear();
             if (worker != null) {
                 worker.shutdownNow();
                 worker = null;
@@ -122,13 +121,30 @@ public final class BiomeLocate {
      */
     private static final AtomicBoolean CLIMATE_TRUSTED = new AtomicBoolean(true);
     private static final AtomicBoolean CLIMATE_WARNED = new AtomicBoolean();
-    /** Same pattern for the parameter-interval prefilter: revoked by its
-     * referee when a full scan finds what the prefilter would have skipped. */
-    private static final AtomicBoolean PREFILTER_TRUSTED = new AtomicBoolean(true);
-    private static final AtomicBoolean PREFILTER_WARNED = new AtomicBoolean();
-    /** Tripwire for the certified margins themselves; a contradiction is a
-     * bug in this mod's math, so everything interval-based shuts off. */
+    /** Tripwire for the prefilter's proofs themselves; a contradiction is a
+     * bug in this mod's math, so every interval shortcut shuts off. */
     private static final AtomicBoolean CERTIFIED_TRUSTED = new AtomicBoolean(true);
+
+    /**
+     * Covering proofs per parameter list, target set and dimension (see
+     * ProvenRejection). A proof is a pure function of the parameter list,
+     * which is replaced, never mutated, so the list is keyed by identity;
+     * cleared on datapack reload and server stop.
+     */
+    private record ProofKey(Object parameters, Set<Holder<Biome>> candidates, int dim) {
+        @Override
+        public boolean equals(Object other) {
+            return other instanceof ProofKey key && key.parameters == parameters && key.dim == dim
+                    && key.candidates.equals(candidates);
+        }
+
+        @Override
+        public int hashCode() {
+            return (System.identityHashCode(parameters) * 31 + candidates.hashCode()) * 31 + dim;
+        }
+    }
+
+    private static final Map<ProofKey, long[]> PROOFS = new ConcurrentHashMap<>();
 
     /**
      * Sized to the shared active-search cap: biome searches are pure math
@@ -171,18 +187,17 @@ public final class BiomeLocate {
         BlockPos origin = BlockPos.containing(source.getPosition());
         int[] sampleYs = Mth.outFromOrigin(origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, VERT_STEP)
                 .toArray();
-        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        ClimateAccess sampler = ClimateAccess.of(level);
         MultiNoiseBiomeSource multiNoise =
                 biomeSource instanceof MultiNoiseBiomeSource mn
                         && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
                         ? mn : null;
-        Prefilter prefilter = buildPrefilter(multiNoise, candidates, sampler);
         AtomicBoolean abortFlag = new AtomicBoolean();
         SearchSession session = new SearchSession(source.getServer(), level.dimension(), source,
                 printable, abortFlag::get);
         Task task = new Task(source.getServer(), level.dimension(), session, abortFlag,
                 new Object(), candidates, count, origin, sampleYs,
-                biomeSource, sampler, multiNoise, prefilter);
+                biomeSource, sampler, multiNoise);
         java.util.concurrent.CompletableFuture<List<BlockPos>> sink =
                 new java.util.concurrent.CompletableFuture<>();
         task.apiSink = sink;
@@ -198,7 +213,7 @@ public final class BiomeLocate {
      * referee is needed; every input is captured on the server thread by
      * the caller, so this runs on any thread.
      */
-    static BlockPos anyWithin(BiomeSource biomeSource, Climate.Sampler sampler, int[] sampleYs,
+    static BlockPos anyWithin(BiomeSource biomeSource, ClimateAccess sampler, int[] sampleYs,
             Set<Holder<Biome>> targets, BlockPos center, int radius) {
         long radiusSqr = (long) radius * radius;
         int maxRing = radius / HORIZ_STEP + 1;
@@ -218,8 +233,8 @@ public final class BiomeLocate {
                     int noiseX = QuartPos.fromBlock(x);
                     int noiseZ = QuartPos.fromBlock(z);
                     for (int y : sampleYs) {
-                        Holder<Biome> biome = biomeSource.getNoiseBiome(
-                                noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                        Holder<Biome> biome = sampler.biome(biomeSource,
+                                noiseX, QuartPos.fromBlock(y), noiseZ);
                         if (targets.contains(biome)) {
                             return new BlockPos(x, y, z);
                         }
@@ -265,24 +280,19 @@ public final class BiomeLocate {
         BlockPos origin = BlockPos.containing(source.getPosition());
         int[] sampleYs = Mth.outFromOrigin(origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, VERT_STEP)
                 .toArray();
-        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        ClimateAccess sampler = ClimateAccess.of(level);
         MultiNoiseBiomeSource multiNoise =
                 biomeSource instanceof MultiNoiseBiomeSource mn
                         && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
                         ? mn : null;
-        Prefilter prefilter = buildPrefilter(multiNoise, candidates, sampler);
         AtomicBoolean abortFlag = new AtomicBoolean();
         SearchSession session = new SearchSession(source.getServer(), level.dimension(), source,
                 printable, abortFlag::get);
         Task task = new Task(source.getServer(), level.dimension(), session, abortFlag,
                 source.getEntity() instanceof ServerPlayer player ? player.getUUID() : "console-biome",
                 candidates, count, origin, sampleYs,
-                biomeSource, sampler, multiNoise, prefilter);
+                biomeSource, sampler, multiNoise);
         task.minDistSqr = (long) minDistanceBlocks * minDistanceBlocks;
-
-        LOGGER.debug("Biome search {} ({}): climate shortcut {}, prefilter {}", printable,
-                level.dimension().identifier(), multiNoise != null ? "active" : "off",
-                prefilter != null ? "dim " + prefilter.dim() : "off");
         Task previous = ACTIVE.get(task.key);
         if (previous != null) {
             previous.abort();
@@ -313,19 +323,15 @@ public final class BiomeLocate {
      * during searches (any disagreement revokes the shortcut for the
      * session). Non-multinoise sources always take the plain path.
      */
-    private static boolean columnConstantClimate(Climate.Sampler sampler, BlockPos origin,
+    private static boolean columnConstantClimate(ClimateAccess sampler, BlockPos origin,
             int yLow, int yHigh) {
-        DensityFunction[] flat = {sampler.temperature(), sampler.humidity(),
-                sampler.continentalness(), sampler.erosion(), sampler.weirdness()};
         for (int i = 0; i < 4; i++) {
             int x = QuartPos.toBlock(QuartPos.fromBlock(origin.getX() + i * 1027));
             int z = QuartPos.toBlock(QuartPos.fromBlock(origin.getZ() - i * 913));
-            DensityFunction.SinglePointContext low = new DensityFunction.SinglePointContext(
-                    x, QuartPos.toBlock(QuartPos.fromBlock(yLow)), z);
-            DensityFunction.SinglePointContext high = new DensityFunction.SinglePointContext(
-                    x, QuartPos.toBlock(QuartPos.fromBlock(yHigh)), z);
-            for (DensityFunction fn : flat) {
-                if (fn.compute(low) != fn.compute(high)) {
+            int low = QuartPos.toBlock(QuartPos.fromBlock(yLow));
+            int high = QuartPos.toBlock(QuartPos.fromBlock(yHigh));
+            for (int dim = 0; dim < 5; dim++) {
+                if (sampler.flat(dim, x, low, z) != sampler.flat(dim, x, high, z)) {
                     return false;
                 }
             }
@@ -334,68 +340,70 @@ public final class BiomeLocate {
     }
 
     /**
-     * The other seed-finder idea, made honest: a biome occupies bounded
-     * intervals in each climate dimension, and for climatically extreme
-     * targets one cheap dimension excludes almost the whole map (mushroom
-     * fields is continentalness alone). The intervals are derived at
-     * runtime from the live parameter list - never hardcoded - and the
-     * most discriminating 2D dimension becomes a first test per column:
-     * outside every interval, the column is rejected before the other four
-     * flat noises, every y sample and every tree lookup.
+     * The other seed-finder idea, made sound: for climatically extreme
+     * targets one cheap 2D dimension excludes most of the map (mushroom
+     * fields by continentalness), so that dimension becomes a first test
+     * per column, before the other four flat noises, every y sample and
+     * every tree lookup. Everything is derived at runtime from the live
+     * parameter list, never hardcoded.
      *
-     * <p>Soundness: multinoise is nearest-point, not containment, so a
-     * value outside every declared interval of the target could still win
-     * where the parameter list leaves gaps. Vanilla's presets tile the
-     * space (containment equals winning), which is exactly the kind of
-     * assumption this mod never trusts blind: the standing referee columns
-     * bypass the prefilter entirely and run the full scan, and any hit the
-     * prefilter would have rejected revokes it for the session.
+     * <p>A target's declared intervals are NOT a rejection rule: multinoise
+     * is nearest-point, not containment, and a target wins outside its
+     * declared interval wherever no non-target point is nearer. Vanilla's
+     * underground biomes do exactly that (lush caves at humidity below its
+     * declared 0.7, because every surface point sits at depth 0 or 1). An
+     * earlier tier rejected every column outside the declared intervals,
+     * guarded by a 1-in-64 referee that revoked it after the first miss;
+     * the misses before the revocation were wrong answers (lush caves from
+     * 0 100 0 on the golden seed answered 84 blocks farther than vanilla).
+     * Only proofs remain: a column is skipped by its flat value only where
+     * the box-cover proof (ProvenRejection) or the margin proof
+     * (CertifiedMargins) shows that no target can win at any y, and a y
+     * sample by its depth only where the margin proof shows it.
      *
-     * @param dim index into the five 2D dimensions (t, h, c, e, w)
-     * @param intervals quantized, merged, sorted [min,max] pairs, flattened
+     * @param dim index into the five 2D dimensions (t, h, c, e, w), or -1
+     *            when no flat dimension proves anything
+     * @param certified proved rejection values of that dimension, quantized,
+     *                  merged, sorted [min,max] pairs, flattened
+     * @param certifiedDepth proved rejection values of depth, same layout
      */
-    private record Prefilter(int dim, long[] intervals, long[] certified, long[] certifiedDepth) {
+    record Prefilter(int dim, long[] certified, long[] certifiedDepth) {
 
         /** Proved rejection of one y sample by its depth alone; see the
          * depth note in buildPrefilter. */
         boolean certifiedDepthRejects(long quantized) {
-            for (int i = 0; i < certifiedDepth.length; i += 2) {
-                if (quantized >= certifiedDepth[i] && quantized <= certifiedDepth[i + 1]) {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        boolean rejects(long quantized) {
-            for (int i = 0; i < intervals.length; i += 2) {
-                if (quantized >= intervals[i] && quantized <= intervals[i + 1]) {
-                    return false;
-                }
-            }
-            return true;
+            return inside(certifiedDepth, quantized);
         }
 
         /**
-         * True when the value lies in a region where rejection is PROVED:
-         * some non-target parameter point strictly beats every target's
-         * best possible fitness there (the covering bound, see
-         * CertifiedMargins). Independent of the trust flags - a proof does
-         * not need a referee.
+         * True when the column's value of the chosen dimension lies where
+         * rejection is PROVED: some non-target point strictly beats every
+         * target there, for every value of the other five dimensions.
+         * Independent of the trust flags - a proof does not need a referee.
          */
         boolean certifiedRejects(long quantized) {
-            for (int i = 0; i < certified.length; i += 2) {
-                if (quantized >= certified[i] && quantized <= certified[i + 1]) {
+            return inside(certified, quantized);
+        }
+
+        /** Lab diagnostics: this prefilter's verdicts for one quantized six-value sample. */
+        String describe(long[] sample) {
+            String depth = "depth certified rejects " + certifiedDepthRejects(sample[5]);
+            if (dim < 0) {
+                return "no flat dimension; " + depth;
+            }
+            return "dim " + dim + " certified " + java.util.Arrays.toString(certified)
+                    + " rejects " + certifiedRejects(sample[dim]) + "; " + depth;
+        }
+
+        private static boolean inside(long[] flat, long quantized) {
+            for (int i = 0; i < flat.length; i += 2) {
+                if (quantized >= flat[i] && quantized <= flat[i + 1]) {
                     return true;
                 }
             }
             return false;
         }
     }
-
-    /** Coverage above this share of the global range filters nothing worth
-     * the extra branch; common biomes (plains, forest) land here. */
-    private static final double PREFILTER_MAX_COVERAGE = 0.7;
 
     /**
      * The covering bound that turns interval rejection into a proof.
@@ -487,16 +495,15 @@ public final class BiomeLocate {
     }
 
     /**
-     * Certified rejection intervals for the chosen dimension: outside rays
-     * beyond the union plus the provable middles of interior gaps. Empty
-     * when nothing certifies (the engine then behaves exactly as the
-     * referee-guarded tier alone).
+     * Certified rejection intervals for one dimension: outside rays beyond
+     * the union plus the provable middles of interior gaps. Empty when
+     * nothing certifies.
      */
     private static long[] buildCertified(int dim, long[] union,
-            List<long[]> nonTargetDim, long offTSquared, Climate.Sampler sampler) {
+            List<long[]> nonTargetDim, long offTSquared, ClimateAccess sampler) {
         // c'_j already folded into nonTargetDim rows by the caller.
-        long lo = quantize(densityOf(sampler, dim).minValue());
-        long hi = quantize(densityOf(sampler, dim).maxValue());
+        long lo = quantize(sampler.min(dim));
+        long hi = quantize(sampler.max(dim));
         long cap = Math.max(1, hi - lo);
         long[][] rows = nonTargetDim.toArray(new long[0][]);
         List<long[]> out = new ArrayList<>();
@@ -536,20 +543,6 @@ public final class BiomeLocate {
         return flat;
     }
 
-    private static DensityFunction densityOf(Climate.Sampler sampler, int dim) {
-        return dim == 5 ? sampler.depth() : flatFunctionOf(sampler, dim);
-    }
-
-    private static DensityFunction flatFunctionOf(Climate.Sampler sampler, int dim) {
-        return switch (dim) {
-            case 0 -> sampler.temperature();
-            case 1 -> sampler.humidity();
-            case 2 -> sampler.continentalness();
-            case 3 -> sampler.erosion();
-            default -> sampler.weirdness();
-        };
-    }
-
     private static Climate.Parameter parameterOf(Climate.ParameterPoint point, int dim) {
         return switch (dim) {
             case 0 -> point.temperature();
@@ -561,54 +554,18 @@ public final class BiomeLocate {
         };
     }
 
-    private static Prefilter buildPrefilter(MultiNoiseBiomeSource multiNoise, Set<Holder<Biome>> candidates,
-            Climate.Sampler sampler) {
+    static Prefilter buildPrefilter(MultiNoiseBiomeSource multiNoise, Set<Holder<Biome>> candidates,
+            ClimateAccess sampler) {
         if (multiNoise == null) {
             return null;
         }
-        var points = ((com.rasmus.locatemore.mixin.MultiNoiseBiomeSourceInvoker) multiNoise)
-                .locatemore$parameters().values();
-        int best = -1;
-        long[] bestIntervals = null;
-        double bestCoverage = PREFILTER_MAX_COVERAGE;
-        for (int dim = 0; dim < 5; dim++) {
-            long globalMin = Long.MAX_VALUE;
-            long globalMax = Long.MIN_VALUE;
-            List<long[]> raw = new ArrayList<>();
-            for (var pair : points) {
-                Climate.Parameter parameter = switch (dim) {
-                    case 0 -> pair.getFirst().temperature();
-                    case 1 -> pair.getFirst().humidity();
-                    case 2 -> pair.getFirst().continentalness();
-                    case 3 -> pair.getFirst().erosion();
-                    default -> pair.getFirst().weirdness();
-                };
-                globalMin = Math.min(globalMin, parameter.min());
-                globalMax = Math.max(globalMax, parameter.max());
-                if (candidates.contains(pair.getSecond())) {
-                    raw.add(new long[]{parameter.min(), parameter.max()});
-                }
-            }
-            if (raw.isEmpty() || globalMax <= globalMin) {
-                continue;
-            }
-            long[] flat = mergeIntervals(raw);
-            long covered = 0;
-            for (int i = 0; i < flat.length; i += 2) {
-                covered += flat[i + 1] - flat[i];
-            }
-            double coverage = covered / (double) (globalMax - globalMin);
-            if (coverage < bestCoverage) {
-                bestCoverage = coverage;
-                best = dim;
-                bestIntervals = flat;
-            }
-        }
-        // Depth gets ONLY a certified tier - computed even when no flat
-        // dimension discriminates. The trusted-interval variant of a depth
-        // window is exactly what the river referee shot down (nearest-point
-        // wins just outside thin depth bands), so a y sample is skipped by
-        // depth only where the covering bound PROVES the target cannot win.
+        var parameters = ((com.rasmus.locatemore.mixin.MultiNoiseBiomeSourceInvoker) multiNoise)
+                .locatemore$parameters();
+        var points = parameters.values();
+        // Depth gets ONLY the margin proof: a y sample is skipped by depth
+        // only where the margin bound PROVES the target cannot win (a
+        // declared depth window was what the river referee shot down,
+        // nearest-point wins just outside thin depth bands).
         List<long[]> depthRaw = new ArrayList<>();
         for (var pair : points) {
             if (candidates.contains(pair.getSecond())) {
@@ -617,12 +574,78 @@ public final class BiomeLocate {
         }
         long[] certifiedDepth = depthRaw.isEmpty() ? new long[0]
                 : certifiedForDim(5, mergeIntervals(depthRaw), points, candidates, sampler);
-        if (best < 0) {
-            return certifiedDepth.length == 0 ? null
-                    : new Prefilter(-1, new long[0], new long[0], certifiedDepth);
+        // The flat dimension proving the largest share of its reachable
+        // range. A proof never rejects inside the declared target union, so
+        // the union's complement bounds what a dimension can prove; the
+        // dimensions are tried in that order and the search stops once no
+        // remaining one can beat the best proof found.
+        double[] bound = new double[5];
+        long[][] unions = new long[5][];
+        Integer[] order = new Integer[5];
+        for (int dim = 0; dim < 5; dim++) {
+            order[dim] = dim;
+            List<long[]> raw = new ArrayList<>();
+            for (var pair : points) {
+                if (candidates.contains(pair.getSecond())) {
+                    Climate.Parameter parameter = parameterOf(pair.getFirst(), dim);
+                    raw.add(new long[]{parameter.min(), parameter.max()});
+                }
+            }
+            if (raw.isEmpty()) {
+                continue;
+            }
+            unions[dim] = mergeIntervals(raw);
+            bound[dim] = 1.0 - share(unions[dim], dim, sampler);
         }
-        long[] certified = certifiedForDim(best, bestIntervals, points, candidates, sampler);
-        return new Prefilter(best, bestIntervals, certified, certifiedDepth);
+        java.util.Arrays.sort(order, Comparator.comparingDouble((Integer dim) -> -bound[dim]));
+        int best = -1;
+        long[] bestCertified = null;
+        double bestShare = 0;
+        for (int dim : order) {
+            if (unions[dim] == null || bound[dim] <= bestShare) {
+                continue;
+            }
+            final int d = dim;
+            long[] covered = PROOFS.computeIfAbsent(new ProofKey(parameters, candidates, dim),
+                    key -> ProvenRejection.rejected(d, points, candidates::contains));
+            long[] margins = certifiedForDim(dim, unions[dim], points, candidates, sampler);
+            List<long[]> both = new ArrayList<>();
+            for (long[] flat : new long[][]{covered, margins}) {
+                for (int i = 0; i < flat.length; i += 2) {
+                    both.add(new long[]{flat[i], flat[i + 1]});
+                }
+            }
+            long[] certified = mergeIntervals(both);
+            double proved = share(certified, dim, sampler);
+            if (proved > bestShare) {
+                bestShare = proved;
+                best = dim;
+                bestCertified = certified;
+            }
+        }
+        if (best < 0) {
+            return certifiedDepth.length == 0 ? null : new Prefilter(-1, new long[0], certifiedDepth);
+        }
+        return new Prefilter(best, bestCertified, certifiedDepth);
+    }
+
+    /** Share of the dimension's reachable quantized range (the sampler's
+     * own bounds) that the flattened intervals cover. */
+    private static double share(long[] flat, int dim, ClimateAccess sampler) {
+        long lo = quantize(sampler.min(dim));
+        long hi = quantize(sampler.max(dim));
+        if (hi <= lo) {
+            return 0;
+        }
+        long covered = 0;
+        for (int i = 0; i < flat.length; i += 2) {
+            long a = Math.max(flat[i], lo);
+            long b = Math.min(flat[i + 1], hi);
+            if (a <= b) {
+                covered += b - a + 1;
+            }
+        }
+        return Math.min(1.0, covered / (double) (hi - lo + 1));
     }
 
     /**
@@ -633,15 +656,15 @@ public final class BiomeLocate {
      */
     private static long[] certifiedForDim(int dim, long[] union,
             List<? extends com.mojang.datafixers.util.Pair<Climate.ParameterPoint, Holder<Biome>>> points,
-            Set<Holder<Biome>> candidates, Climate.Sampler sampler) {
+            Set<Holder<Biome>> candidates, ClimateAccess sampler) {
         long[] omegaLo = new long[6];
         long[] omegaHi = new long[6];
         for (int d = 0; d < 6; d++) {
             if (d == dim) {
                 continue;
             }
-            omegaLo[d] = quantize(densityOf(sampler, d).minValue());
-            omegaHi[d] = quantize(densityOf(sampler, d).maxValue());
+            omegaLo[d] = quantize(sampler.min(d));
+            omegaHi[d] = quantize(sampler.max(d));
         }
         long offTSquared = Long.MAX_VALUE;
         List<long[]> rows = new ArrayList<>();
@@ -709,11 +732,14 @@ public final class BiomeLocate {
         final BlockPos origin;
         final int[] sampleYs;
         final BiomeSource biomeSource;
-        final Climate.Sampler sampler;
+        final ClimateAccess sampler;
         /** Non-null only when the column-constant climate probe passed. */
         final MultiNoiseBiomeSource multiNoise;
-        /** Non-null only when a discriminating dimension exists; see Prefilter. */
-        final Prefilter prefilter;
+        /** Built on the worker at the start of run() (the covering proofs
+         * cost tens of milliseconds on a first search, too much for a tick);
+         * null when nothing is proved. Written before any sampler is
+         * submitted, so the pool threads see it. See Prefilter. */
+        Prefilter prefilter;
 
         final AtomicBoolean aborted;
 
@@ -728,8 +754,7 @@ public final class BiomeLocate {
         Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
                 AtomicBoolean aborted, Object key,
                 Set<Holder<Biome>> candidates, int count, BlockPos origin, int[] sampleYs,
-                BiomeSource biomeSource, Climate.Sampler sampler, MultiNoiseBiomeSource multiNoise,
-                Prefilter prefilter) {
+                BiomeSource biomeSource, ClimateAccess sampler, MultiNoiseBiomeSource multiNoise) {
             this.server = server;
             this.dimension = dimension;
             this.session = session;
@@ -742,7 +767,6 @@ public final class BiomeLocate {
             this.biomeSource = biomeSource;
             this.sampler = sampler;
             this.multiNoise = multiNoise;
-            this.prefilter = prefilter;
         }
 
         void abort() {
@@ -754,6 +778,10 @@ public final class BiomeLocate {
         void run() {
             long startNanos = System.nanoTime();
             try {
+                prefilter = buildPrefilter(multiNoise, candidates, sampler);
+                LOGGER.debug("Biome search {} ({}): climate shortcut {}, prefilter {}", session.printable,
+                        dimension.identifier(), multiNoise != null ? "active" : "off",
+                        prefilter != null ? "dim " + prefilter.dim() : "off");
                 List<Hit> hits = search(startNanos);
                 if (!aborted.get()) {
                     finish(hits, startNanos, null);
@@ -910,26 +938,24 @@ public final class BiomeLocate {
             }
             int blockX = QuartPos.toBlock(noiseX);
             int blockZ = QuartPos.toBlock(noiseZ);
-            DensityFunction.SinglePointContext flat = new DensityFunction.SinglePointContext(
-                    blockX, QuartPos.toBlock(QuartPos.fromBlock(sampleYs[0])), blockZ);
+            int flatY = QuartPos.toBlock(QuartPos.fromBlock(sampleYs[0]));
             // Deterministic 1-in-64 standing referee: these columns also run
             // the plain sampler and must agree, or the shortcut is revoked.
-            // The prefilter's referee rides along: on referee columns a
-            // prefilter rejection is not acted on, and if the full scan then
-            // finds a hit the prefilter would have skipped, it is revoked.
+            // The prefilter's tripwire rides along: on referee columns a
+            // proved rejection is not acted on, and a hit there means the
+            // proof machinery itself is wrong.
             // Columns sit 8 quarts apart, so the low three bits of noiseX
             // and noiseZ are origin-constant: any mask on them would make
             // the referee rate origin-dependent (for 7 of 8 origins, zero).
             // Shifting those bits away first makes the 1-in-64 rate hold
             // for every origin.
             boolean referee = (((noiseX >> 3) ^ (noiseZ >> 3)) & 63) == 0;
-            boolean prefilterRejected = false;
             float[] flats = new float[5];
             boolean[] computed = new boolean[5];
             boolean certifiedRejected = false;
             if (prefilter != null && prefilter.dim() >= 0) {
                 int dim = prefilter.dim();
-                flats[dim] = (float) flatFunction(dim).compute(flat);
+                flats[dim] = sampler.flat(dim, blockX, flatY, blockZ);
                 computed[dim] = true;
                 long quantized = Climate.quantizeCoord(flats[dim]);
                 if (CERTIFIED_TRUSTED.get() && prefilter.certifiedRejects(quantized)) {
@@ -940,16 +966,11 @@ public final class BiomeLocate {
                         return null;
                     }
                     certifiedRejected = true;
-                } else if (PREFILTER_TRUSTED.get() && prefilter.rejects(quantized)) {
-                    if (!referee) {
-                        return null;
-                    }
-                    prefilterRejected = true;
                 }
             }
             for (int dim = 0; dim < 5; dim++) {
                 if (!computed[dim]) {
-                    flats[dim] = (float) flatFunction(dim).compute(flat);
+                    flats[dim] = sampler.flat(dim, blockX, flatY, blockZ);
                 }
             }
             float temperature = flats[0];
@@ -965,8 +986,7 @@ public final class BiomeLocate {
             // reintroduce without the certified margin machinery.
             for (int y : sampleYs) {
                 int blockY = QuartPos.toBlock(QuartPos.fromBlock(y));
-                float depth = (float) sampler.depth().compute(
-                        new DensityFunction.SinglePointContext(blockX, blockY, blockZ));
+                float depth = sampler.depth(blockX, blockY, blockZ);
                 // Proved-by-depth skip: no tree lookup for a y whose depth
                 // certifiably cannot host the target. Referee columns never
                 // skip and trip the contradiction alarm below instead.
@@ -978,8 +998,8 @@ public final class BiomeLocate {
                 Holder<Biome> biome = multiNoise.getNoiseBiome(Climate.target(
                         temperature, humidity, continentalness, erosion, depth, weirdness));
                 if (referee) {
-                    Holder<Biome> plain = biomeSource.getNoiseBiome(
-                            noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                    Holder<Biome> plain = sampler.biome(biomeSource,
+                            noiseX, QuartPos.fromBlock(y), noiseZ);
                     if (plain != biome) {
                         CLIMATE_TRUSTED.set(false);
                         if (CLIMATE_WARNED.compareAndSet(false, true)) {
@@ -994,25 +1014,13 @@ public final class BiomeLocate {
                 }
                 if (candidates.contains(biome)) {
                     if (certifiedRejected || depthCertSkip) {
-                        // Should be impossible by the covering-bound proof.
-                        LOGGER.error("CERTIFIED margin contradiction at column {},{} y {} in {}: "
+                        // Should be impossible by the covering and margin proofs.
+                        LOGGER.error("CERTIFIED prefilter contradiction at column {},{} y {} in {}: "
                                         + "the proof rejected a column whose full scan found {}. "
-                                        + "This is a bug in the margin computation - please report. "
+                                        + "This is a bug in the prefilter proofs - please report. "
                                         + "Disabling all interval shortcuts for this session.",
                                 column.x(), column.z(), y, dimension.identifier(), biome);
-                        PREFILTER_TRUSTED.set(false);
                         CERTIFIED_TRUSTED.set(false);
-                    }
-                    if (prefilterRejected) {
-                        PREFILTER_TRUSTED.set(false);
-                        if (PREFILTER_WARNED.compareAndSet(false, true)) {
-                            LOGGER.warn("Interval referee disagreement at column {},{} y {} in {}: the "
-                                            + "parameter intervals would have skipped a sample whose "
-                                            + "full scan found {}. Interval shortcuts are disabled for "
-                                            + "this session; results stay correct, but please report "
-                                            + "this line.",
-                                    column.x(), column.z(), y, dimension.identifier(), biome);
-                        }
                     }
                     return new BlockPos(column.x(), y, column.z());
                 }
@@ -1020,20 +1028,10 @@ public final class BiomeLocate {
             return null;
         }
 
-        private DensityFunction flatFunction(int dim) {
-            return switch (dim) {
-                case 0 -> sampler.temperature();
-                case 1 -> sampler.humidity();
-                case 2 -> sampler.continentalness();
-                case 3 -> sampler.erosion();
-                default -> sampler.weirdness();
-            };
-        }
-
         private BlockPos sampleColumnPlain(Column column, int noiseX, int noiseZ) {
             for (int y : sampleYs) {
-                Holder<Biome> biome = biomeSource.getNoiseBiome(
-                        noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                Holder<Biome> biome = sampler.biome(biomeSource,
+                        noiseX, QuartPos.fromBlock(y), noiseZ);
                 if (candidates.contains(biome)) {
                     return new BlockPos(column.x(), y, column.z());
                 }

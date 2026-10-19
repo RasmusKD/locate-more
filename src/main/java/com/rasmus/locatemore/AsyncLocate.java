@@ -385,7 +385,7 @@ public final class AsyncLocate {
                 byPlacement, concentric,
                 level.registryAccess(), level.getChunkSource().getGenerator(),
                 level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
-                level.getStructureManager(),
+                VersionCompat.templateManager(level),
                 LevelHeightAccessor.create(level.getMinY(), level.getHeight()),
                 level.getChunkSource().chunkScanner(),
                 server.getFixerUpper(), state.getLevelSeed());
@@ -447,13 +447,12 @@ public final class AsyncLocate {
      */
     static boolean mathCanStart(ServerLevel level, Structure structure, ChunkPos pos) {
         return canStartMemoized(level.dimension(), structure, pos, null, () -> {
-            HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
-            return new Structure.GenerationContext(
+            return VersionCompat.generationContext(
                     level.registryAccess(), level.getChunkSource().getGenerator(),
                     level.getChunkSource().getGenerator().getBiomeSource(), level.getChunkSource().randomState(),
-                    level.getStructureManager(),
+                    VersionCompat.templateManager(level),
                     level.getChunkSource().getGeneratorState().getLevelSeed(), pos,
-                    LevelHeightAccessor.create(level.getMinY(), level.getHeight()), biomes::contains);
+                    LevelHeightAccessor.create(level.getMinY(), level.getHeight()), structure.biomes());
         });
     }
 
@@ -526,7 +525,7 @@ public final class AsyncLocate {
         for (int x : xs) {
             for (int y : ys) {
                 for (int z : zs) {
-                    if (!context.biomeSource().getNoiseBiome(x, y, z, context.randomState().sampler())
+                    if (!VersionCompat.biomeAt(context, x, y, z)
                             .is(net.minecraft.tags.BiomeTags.REQUIRED_OCEAN_MONUMENT_SURROUNDING)) {
                         return true;
                     }
@@ -1278,10 +1277,9 @@ public final class AsyncLocate {
 
         private boolean structureCanStart(Structure structure, ChunkPos pos, LocateMore.Stats scratch) {
             return canStartMemoized(dimension, structure, pos, scratch, () -> {
-                HolderSet<net.minecraft.world.level.biome.Biome> biomes = structure.biomes();
-                return new Structure.GenerationContext(
+                return VersionCompat.generationContext(
                         registryAccess, generator, biomeSource, randomState, templateManager,
-                        seed, pos, heightAccessor, biomes::contains);
+                        seed, pos, heightAccessor, structure.biomes());
             });
         }
 

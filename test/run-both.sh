@@ -15,3 +15,6 @@ cp gradle.properties gradle.properties.runboth
 trap 'mv gradle.properties.runboth gradle.properties' EXIT INT TERM
 sed -i "s/^minecraft_version=.*/minecraft_version=$MC2/; s/^fabric_version=.*/fabric_version=$FABRIC2/" gradle.properties
 test/run.sh "$@"
+
+# The 26.3 variant has its own build (-PmcTarget=26.3) and golden.
+MC_TARGET=26.3 test/run.sh "$@"
