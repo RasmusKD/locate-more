@@ -25,7 +25,6 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
-import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.levelgen.structure.Structure;
 
 /**
@@ -188,7 +187,7 @@ final class NearSearch {
     private static Function<BlockPos, CompletableFuture<BlockPos>> biomeProbe(
             ServerLevel level, Set<Holder<Biome>> targets, int radius) {
         BiomeSource biomeSource = level.getChunkSource().getGenerator().getBiomeSource();
-        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        ClimateAccess sampler = ClimateAccess.of(level);
         int minY = level.getMinY() + 1;
         int maxY = level.getMaxY() + 1;
         return center -> {

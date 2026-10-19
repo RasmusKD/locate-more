@@ -19,10 +19,30 @@ base {
     archivesName = project.archives_base_name
 }
 
+// The differential run's driver lives in its own source set and mod (locatemorelab):
+// it is on the dev server's classpath only and never enters the shipped jar.
+sourceSets {
+    lab {
+        compileClasspath += sourceSets.main.compileClasspath + sourceSets.main.output
+        runtimeClasspath += sourceSets.main.runtimeClasspath + sourceSets.main.output
+    }
+}
+
 loom {
     mods {
         "locatemore" {
             sourceSet sourceSets.main
+        }
+        "locatemorelab" {
+            sourceSet sourceSets.lab
+        }
+    }
+    runs {
+        labServer {
+            server()
+            source sourceSets.lab
+            runDir 'run'
+            vmArg '-Xmx3G'
         }
     }
 }

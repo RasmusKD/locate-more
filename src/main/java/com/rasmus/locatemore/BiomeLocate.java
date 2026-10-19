@@ -35,7 +35,6 @@ import net.minecraft.world.level.biome.Biome;
 import net.minecraft.world.level.biome.BiomeSource;
 import net.minecraft.world.level.biome.Climate;
 import net.minecraft.world.level.biome.MultiNoiseBiomeSource;
-import net.minecraft.world.level.levelgen.DensityFunction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -171,7 +170,7 @@ public final class BiomeLocate {
         BlockPos origin = BlockPos.containing(source.getPosition());
         int[] sampleYs = Mth.outFromOrigin(origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, VERT_STEP)
                 .toArray();
-        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        ClimateAccess sampler = ClimateAccess.of(level);
         MultiNoiseBiomeSource multiNoise =
                 biomeSource instanceof MultiNoiseBiomeSource mn
                         && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
@@ -198,7 +197,7 @@ public final class BiomeLocate {
      * referee is needed; every input is captured on the server thread by
      * the caller, so this runs on any thread.
      */
-    static BlockPos anyWithin(BiomeSource biomeSource, Climate.Sampler sampler, int[] sampleYs,
+    static BlockPos anyWithin(BiomeSource biomeSource, ClimateAccess sampler, int[] sampleYs,
             Set<Holder<Biome>> targets, BlockPos center, int radius) {
         long radiusSqr = (long) radius * radius;
         int maxRing = radius / HORIZ_STEP + 1;
@@ -218,8 +217,8 @@ public final class BiomeLocate {
                     int noiseX = QuartPos.fromBlock(x);
                     int noiseZ = QuartPos.fromBlock(z);
                     for (int y : sampleYs) {
-                        Holder<Biome> biome = biomeSource.getNoiseBiome(
-                                noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                        Holder<Biome> biome = sampler.biome(biomeSource,
+                                noiseX, QuartPos.fromBlock(y), noiseZ);
                         if (targets.contains(biome)) {
                             return new BlockPos(x, y, z);
                         }
@@ -265,7 +264,7 @@ public final class BiomeLocate {
         BlockPos origin = BlockPos.containing(source.getPosition());
         int[] sampleYs = Mth.outFromOrigin(origin.getY(), level.getMinY() + 1, level.getMaxY() + 1, VERT_STEP)
                 .toArray();
-        Climate.Sampler sampler = level.getChunkSource().randomState().sampler();
+        ClimateAccess sampler = ClimateAccess.of(level);
         MultiNoiseBiomeSource multiNoise =
                 biomeSource instanceof MultiNoiseBiomeSource mn
                         && columnConstantClimate(sampler, origin, level.getMinY() + 1, level.getMaxY())
@@ -313,19 +312,15 @@ public final class BiomeLocate {
      * during searches (any disagreement revokes the shortcut for the
      * session). Non-multinoise sources always take the plain path.
      */
-    private static boolean columnConstantClimate(Climate.Sampler sampler, BlockPos origin,
+    private static boolean columnConstantClimate(ClimateAccess sampler, BlockPos origin,
             int yLow, int yHigh) {
-        DensityFunction[] flat = {sampler.temperature(), sampler.humidity(),
-                sampler.continentalness(), sampler.erosion(), sampler.weirdness()};
         for (int i = 0; i < 4; i++) {
             int x = QuartPos.toBlock(QuartPos.fromBlock(origin.getX() + i * 1027));
             int z = QuartPos.toBlock(QuartPos.fromBlock(origin.getZ() - i * 913));
-            DensityFunction.SinglePointContext low = new DensityFunction.SinglePointContext(
-                    x, QuartPos.toBlock(QuartPos.fromBlock(yLow)), z);
-            DensityFunction.SinglePointContext high = new DensityFunction.SinglePointContext(
-                    x, QuartPos.toBlock(QuartPos.fromBlock(yHigh)), z);
-            for (DensityFunction fn : flat) {
-                if (fn.compute(low) != fn.compute(high)) {
+            int low = QuartPos.toBlock(QuartPos.fromBlock(yLow));
+            int high = QuartPos.toBlock(QuartPos.fromBlock(yHigh));
+            for (int dim = 0; dim < 5; dim++) {
+                if (sampler.flat(dim, x, low, z) != sampler.flat(dim, x, high, z)) {
                     return false;
                 }
             }
@@ -493,10 +488,10 @@ public final class BiomeLocate {
      * referee-guarded tier alone).
      */
     private static long[] buildCertified(int dim, long[] union,
-            List<long[]> nonTargetDim, long offTSquared, Climate.Sampler sampler) {
+            List<long[]> nonTargetDim, long offTSquared, ClimateAccess sampler) {
         // c'_j already folded into nonTargetDim rows by the caller.
-        long lo = quantize(densityOf(sampler, dim).minValue());
-        long hi = quantize(densityOf(sampler, dim).maxValue());
+        long lo = quantize(sampler.min(dim));
+        long hi = quantize(sampler.max(dim));
         long cap = Math.max(1, hi - lo);
         long[][] rows = nonTargetDim.toArray(new long[0][]);
         List<long[]> out = new ArrayList<>();
@@ -536,20 +531,6 @@ public final class BiomeLocate {
         return flat;
     }
 
-    private static DensityFunction densityOf(Climate.Sampler sampler, int dim) {
-        return dim == 5 ? sampler.depth() : flatFunctionOf(sampler, dim);
-    }
-
-    private static DensityFunction flatFunctionOf(Climate.Sampler sampler, int dim) {
-        return switch (dim) {
-            case 0 -> sampler.temperature();
-            case 1 -> sampler.humidity();
-            case 2 -> sampler.continentalness();
-            case 3 -> sampler.erosion();
-            default -> sampler.weirdness();
-        };
-    }
-
     private static Climate.Parameter parameterOf(Climate.ParameterPoint point, int dim) {
         return switch (dim) {
             case 0 -> point.temperature();
@@ -562,7 +543,7 @@ public final class BiomeLocate {
     }
 
     private static Prefilter buildPrefilter(MultiNoiseBiomeSource multiNoise, Set<Holder<Biome>> candidates,
-            Climate.Sampler sampler) {
+            ClimateAccess sampler) {
         if (multiNoise == null) {
             return null;
         }
@@ -633,15 +614,15 @@ public final class BiomeLocate {
      */
     private static long[] certifiedForDim(int dim, long[] union,
             List<? extends com.mojang.datafixers.util.Pair<Climate.ParameterPoint, Holder<Biome>>> points,
-            Set<Holder<Biome>> candidates, Climate.Sampler sampler) {
+            Set<Holder<Biome>> candidates, ClimateAccess sampler) {
         long[] omegaLo = new long[6];
         long[] omegaHi = new long[6];
         for (int d = 0; d < 6; d++) {
             if (d == dim) {
                 continue;
             }
-            omegaLo[d] = quantize(densityOf(sampler, d).minValue());
-            omegaHi[d] = quantize(densityOf(sampler, d).maxValue());
+            omegaLo[d] = quantize(sampler.min(d));
+            omegaHi[d] = quantize(sampler.max(d));
         }
         long offTSquared = Long.MAX_VALUE;
         List<long[]> rows = new ArrayList<>();
@@ -709,7 +690,7 @@ public final class BiomeLocate {
         final BlockPos origin;
         final int[] sampleYs;
         final BiomeSource biomeSource;
-        final Climate.Sampler sampler;
+        final ClimateAccess sampler;
         /** Non-null only when the column-constant climate probe passed. */
         final MultiNoiseBiomeSource multiNoise;
         /** Non-null only when a discriminating dimension exists; see Prefilter. */
@@ -728,7 +709,7 @@ public final class BiomeLocate {
         Task(MinecraftServer server, ResourceKey<Level> dimension, SearchSession session,
                 AtomicBoolean aborted, Object key,
                 Set<Holder<Biome>> candidates, int count, BlockPos origin, int[] sampleYs,
-                BiomeSource biomeSource, Climate.Sampler sampler, MultiNoiseBiomeSource multiNoise,
+                BiomeSource biomeSource, ClimateAccess sampler, MultiNoiseBiomeSource multiNoise,
                 Prefilter prefilter) {
             this.server = server;
             this.dimension = dimension;
@@ -910,8 +891,7 @@ public final class BiomeLocate {
             }
             int blockX = QuartPos.toBlock(noiseX);
             int blockZ = QuartPos.toBlock(noiseZ);
-            DensityFunction.SinglePointContext flat = new DensityFunction.SinglePointContext(
-                    blockX, QuartPos.toBlock(QuartPos.fromBlock(sampleYs[0])), blockZ);
+            int flatY = QuartPos.toBlock(QuartPos.fromBlock(sampleYs[0]));
             // Deterministic 1-in-64 standing referee: these columns also run
             // the plain sampler and must agree, or the shortcut is revoked.
             // The prefilter's referee rides along: on referee columns a
@@ -929,7 +909,7 @@ public final class BiomeLocate {
             boolean certifiedRejected = false;
             if (prefilter != null && prefilter.dim() >= 0) {
                 int dim = prefilter.dim();
-                flats[dim] = (float) flatFunction(dim).compute(flat);
+                flats[dim] = sampler.flat(dim, blockX, flatY, blockZ);
                 computed[dim] = true;
                 long quantized = Climate.quantizeCoord(flats[dim]);
                 if (CERTIFIED_TRUSTED.get() && prefilter.certifiedRejects(quantized)) {
@@ -949,7 +929,7 @@ public final class BiomeLocate {
             }
             for (int dim = 0; dim < 5; dim++) {
                 if (!computed[dim]) {
-                    flats[dim] = (float) flatFunction(dim).compute(flat);
+                    flats[dim] = sampler.flat(dim, blockX, flatY, blockZ);
                 }
             }
             float temperature = flats[0];
@@ -965,8 +945,7 @@ public final class BiomeLocate {
             // reintroduce without the certified margin machinery.
             for (int y : sampleYs) {
                 int blockY = QuartPos.toBlock(QuartPos.fromBlock(y));
-                float depth = (float) sampler.depth().compute(
-                        new DensityFunction.SinglePointContext(blockX, blockY, blockZ));
+                float depth = sampler.depth(blockX, blockY, blockZ);
                 // Proved-by-depth skip: no tree lookup for a y whose depth
                 // certifiably cannot host the target. Referee columns never
                 // skip and trip the contradiction alarm below instead.
@@ -978,8 +957,8 @@ public final class BiomeLocate {
                 Holder<Biome> biome = multiNoise.getNoiseBiome(Climate.target(
                         temperature, humidity, continentalness, erosion, depth, weirdness));
                 if (referee) {
-                    Holder<Biome> plain = biomeSource.getNoiseBiome(
-                            noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                    Holder<Biome> plain = sampler.biome(biomeSource,
+                            noiseX, QuartPos.fromBlock(y), noiseZ);
                     if (plain != biome) {
                         CLIMATE_TRUSTED.set(false);
                         if (CLIMATE_WARNED.compareAndSet(false, true)) {
@@ -1020,20 +999,10 @@ public final class BiomeLocate {
             return null;
         }
 
-        private DensityFunction flatFunction(int dim) {
-            return switch (dim) {
-                case 0 -> sampler.temperature();
-                case 1 -> sampler.humidity();
-                case 2 -> sampler.continentalness();
-                case 3 -> sampler.erosion();
-                default -> sampler.weirdness();
-            };
-        }
-
         private BlockPos sampleColumnPlain(Column column, int noiseX, int noiseZ) {
             for (int y : sampleYs) {
-                Holder<Biome> biome = biomeSource.getNoiseBiome(
-                        noiseX, QuartPos.fromBlock(y), noiseZ, sampler);
+                Holder<Biome> biome = sampler.biome(biomeSource,
+                        noiseX, QuartPos.fromBlock(y), noiseZ);
                 if (candidates.contains(biome)) {
                     return new BlockPos(column.x(), y, column.z());
                 }

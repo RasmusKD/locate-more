@@ -121,6 +121,6 @@ every line uses vanilla translation keys.
 
 ## Versions
 
-One jar (`+26.1`) runs on 26.1.2 and 26.2; there is no 26.3 jar yet (see VERSIONS.md). Fabric, requires Fabric API. MIT license.
+The `+26.1` jar runs on 26.1.2 and 26.2; the `+26.3` jar runs on 26.3 (see VERSIONS.md). Fabric, requires Fabric API. MIT license.
 Server-side: installed on a server, vanilla clients get everything; in
 singleplayer a client install works.

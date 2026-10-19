@@ -29,8 +29,8 @@ test/run.sh
 ```
 
 Boots the dev server on seed 20260821, runs the battery in `test/commands.txt`
-(async engine, generation-backed sync engine via the local locatemore-lab mod,
-and the parse tripwire), and diffs the coordinates against
+(async engine, generation-backed sync engine via the in-repo dev-only `src/lab`
+mod, and the parse tripwire), and diffs the coordinates against
 `test/golden/<mc-version>.txt`. Empty diff = ship.
 
 The run tests the version in gradle.properties. The jar supports two, so
@@ -41,6 +41,13 @@ and diffed independently). When the two goldens are identical, worldgen
 did not move between the versions and the dual-version claim is proven
 rather than assumed; when they differ, each version's golden records its
 own truth.
+
+`MC_TARGET=26.3 test/run.sh` runs the 26.3 variant. `test/oracle.py` is the
+stronger check: it asks LocateMore and unmodified vanilla (`lmlab bypass on`)
+the same plain `/locate` at fixed origins and classifies each pair (same, none,
+mod_nearer, mod_beyond, VIOLATION); stage 2 re-asks vanilla from every
+mod_nearer answer to prove the hit is real. The recipe is in its docstring. A
+blessed golden must agree with this oracle, never come from the mod alone.
 
 ## 4. When the diff is not empty
 
